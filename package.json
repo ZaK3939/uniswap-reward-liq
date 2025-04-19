@@ -1,0 +1,35 @@
+{
+  "name": "uniswap-v4-unichain",
+  "version": "1.0.0",
+  "description": "Uniswap v4 implementation for Unichain",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "ts-node src/index.ts"
+  },
+  "keywords": [
+    "uniswap",
+    "v4",
+    "unichain",
+    "defi",
+    "liquidity"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@uniswap/permit2-sdk": "^1.0.0",
+    "@uniswap/sdk-core": "^4.0.9",
+    "@uniswap/universal-router-sdk": "^2.0.1",
+    "@uniswap/v4-sdk": "^1.0.0",
+    "commander": "^11.1.0",
+    "cron": "^3.1.6",
+    "dotenv": "^16.3.1",
+    "viem": "^1.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.3",
+    "graphql-request": "^7.1.2",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.3.2"
+  }
+}
