@@ -37,17 +37,12 @@ export interface DetailPositionInfo extends PositionDetails {
  * Position creation parameters
  */
 export interface CreatePositionParams {
-  token0: string;
-  token1: string;
-  fee: number;
-  tickSpacing: number;
+  poolData: PoolData;
   amount0: bigint;
   amount1: bigint;
   tickLower: number;
   tickUpper: number;
-  priceRangePercent?: number;
   slippageTolerance?: number;
-  recipient?: string;
   deadline?: number;
 }
 

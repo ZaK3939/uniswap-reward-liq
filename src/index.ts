@@ -1,11 +1,9 @@
 import 'dotenv/config';
 import { CronJob } from 'cron';
 import logger from './utils/logger';
-import { getPublicClient, getAccountAddress } from './utils/client';
 import { analyzeAllPositions, getPositionInfo } from './services/positions';
-import { executeSwap, quoteExactInputSingleV4 } from './services/swaps';
 import { createPosition } from './services/createliq';
-import { TOKEN_ADDRESSES, TOKEN_INFO, TOKEN_PAIRS } from './config/tokens';
+import { TOKEN_PAIRS } from './config/tokens';
 import {
   TX_CONFIG,
   POSITION_CONFIG,
@@ -13,8 +11,7 @@ import {
   MONITORING_INTERVAL_MINUTES,
   OUT_OF_RANGE_THRESHOLD,
 } from './config/config';
-import { formatEther, formatUnits } from 'viem';
-import { ERC20_ABI } from './abis';
+
 import { computeCounterpartyAmounts } from './utils/calcAmountForliquidity';
 import { CreatePositionParams } from './types';
 
@@ -70,7 +67,7 @@ export async function createInitialPosition(): Promise<void> {
     if (!owner) throw new Error('Wallet not connected');
 
     // 1) Compute amounts based on balances and current pool price
-    const { amount0, amount1, tickLower, tickUpper } = await computeCounterpartyAmounts(
+    const { poolData, amount0, amount1, tickLower, tickUpper } = await computeCounterpartyAmounts(
       owner,
       TOKEN_PAIR.tokenA,
       TOKEN_PAIR.tokenB,
@@ -80,6 +77,7 @@ export async function createInitialPosition(): Promise<void> {
 
     // 2) Build createPosition params
     const params: CreatePositionParams = {
+      poolData,
       token0: TOKEN_PAIR.tokenA,
       token1: TOKEN_PAIR.tokenB,
       fee: TOKEN_PAIR.feeTier,
@@ -88,19 +86,18 @@ export async function createInitialPosition(): Promise<void> {
       amount1,
       tickLower,
       tickUpper,
-      priceRangePercent: POSITION_CONFIG.DEFAULT_PRICE_RANGE_PERCENT,
       slippageTolerance: TX_CONFIG.SLIPPAGE_TOLERANCE,
     };
 
     // 3) Create the position
     const result = await createPosition(params);
 
-    // if (result.success && result.tokenId) {
-    //   logger.info(`Position created: ID=${result.tokenId}`);
-    //   // reset out-of-range counter or update state as needed
-    // } else {
-    //   logger.error(`Position creation failed: ${result.error || 'unknown error'}`);
-    // }
+    if (result.success && result.tokenId) {
+      logger.info(`Position created: ID=${result.tokenId}`);
+      // reset out-of-range counter or update state as needed
+    } else {
+      logger.error(`Position creation failed: ${result.error || 'unknown error'}`);
+    }
   } catch (err: any) {
     logger.error(`Error during position creation: ${err.message || err}`);
   }
@@ -219,7 +216,9 @@ function startMonitoring() {
           logger.info(
             `Position ${currentPositionId}: range ${pos.priceLower.toFixed(6)} - ${pos.priceUpper.toFixed(
               6,
-            )}, current ${pos.currentPrice.toFixed(6)}, inRange=${pos.inRange}`,
+            )}, current ${pos.currentPrice.toFixed(6)}, inRange=${
+              pos.inRange
+            }, percentOfPool=${pos.percentOfPool.toFixed(2)}%`,
           );
 
           if (!pos.inRange) {
@@ -248,8 +247,6 @@ function startMonitoring() {
     job.stop();
     process.exit(0);
   });
-
-  logger.info(`Next run: ${job.nextDate()?.toLocaleString()}`);
 }
 
 // Launch

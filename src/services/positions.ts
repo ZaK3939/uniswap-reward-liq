@@ -61,7 +61,7 @@ export async function getPositionDetails(tokenId: bigint): Promise<{
 
   const [poolKey, infoValue] = raw;
   logger.info(
-    `getPoolAndPositionInfo result: ${JSON.stringify({
+    `getPoolAndPositionInfo: ${JSON.stringify({
       poolKey,
       // info: infoValue.toString(),
     })}`,
@@ -77,7 +77,7 @@ export async function getPositionDetails(tokenId: bigint): Promise<{
     functionName: 'getPositionLiquidity',
     args: [tokenId],
   })) as bigint;
-  logger.info(`Liquidity for tokenId ${tokenId}: ${liquidityRaw.toString()}`);
+
   return {
     tokenId,
     tickLower: decoded.getTickLower(),
@@ -94,11 +94,10 @@ export async function getPositionDetails(tokenId: bigint): Promise<{
 export async function getPositionInfo(tokenId: bigint): Promise<DetailPositionInfo | undefined> {
   logger.info(`Fetching position info for tokenId: ${tokenId}`);
   const details = await getPositionDetails(tokenId);
-  if (details.liquidity === 0n) {
-    logger.info(`Position ${tokenId} has zero liquidity, skipping...`);
+  if (!details || !details.liquidity || details.liquidity === 0n) {
+    logger.debug(`Skipping position ${tokenId} with zero liquidity`);
     return undefined;
   }
-
   const token0 = getTokenByAddress(details.token0);
   const token1 = getTokenByAddress(details.token1);
   const poolData = await getPoolData(token0, token1, details.fee, details.tickSpacing, details.hooks);
@@ -147,10 +146,7 @@ export async function getPositionInfo(tokenId: bigint): Promise<DetailPositionIn
   };
 }
 
-export async function analyzeAllPositions(
-  owner: Address,
-  includeEmptyPositions: boolean = false,
-): Promise<PositionAnalysis> {
+export async function analyzeAllPositions(owner: Address): Promise<PositionAnalysis> {
   logger.info('Analyzing all positions...');
 
   const rawPositions = await getV4Positions(owner);
@@ -161,7 +157,7 @@ export async function analyzeAllPositions(
   for (const { tokenId } of rawPositions) {
     try {
       const info = await getPositionInfo(BigInt(tokenId));
-      if (!info) {
+      if (!info?.liquidity || info.liquidity === 0) {
         logger.debug(`Skipping position ${tokenId} with zero liquidity (likely closed)`);
         continue;
       }

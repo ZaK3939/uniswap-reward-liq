@@ -1,22 +1,17 @@
-import { CurrencyAmount, Percent } from '@uniswap/sdk-core';
-import { tickToPrice, priceToClosestTick, Pool, Position, V4PositionManager } from '@uniswap/v4-sdk';
+import { Percent } from '@uniswap/sdk-core';
+import { tickToPrice, Pool, Position, V4PositionManager } from '@uniswap/v4-sdk';
 import type { Address } from 'viem';
-import { formatUnits, parseUnits, recoverAddress, zeroAddress } from 'viem';
+import { formatUnits, parseUnits, zeroAddress } from 'viem';
 import { getPublicClient, getWalletAccount, getWalletClient } from '../utils/client';
-import { POSITION_CONFIG, TX_CONFIG, CONTRACTS, BOT_ADDRESS, PERMIT2_DOMAIN } from '../config/config';
+import { TX_CONFIG, CONTRACTS, BOT_ADDRESS, PERMIT2_DOMAIN, PERMIT2_TYPES } from '../config/config';
 import { getTokenByAddress } from '../config/tokens';
-import { nearestUsableTick } from '../utils/tick/tickMath';
 import { getPositionInfo, getV4Positions } from './positions';
 import logger from '../utils/logger';
 import type { CreatePositionParams, CreatePositionResult } from '../types';
 import { unichain } from '../config/chains';
 import { ERC20_ABI, PERMIT2_ABI, POSITION_MANAGER_ABI } from '../abis';
 import { getPoolData } from './pool';
-import JSBI from 'jsbi';
-import type { TypedDataField } from '@ethersproject/abstract-signer';
-import { _TypedDataEncoder } from '@ethersproject/hash';
-import { arrayify } from '@ethersproject/bytes';
-export async function createPosition(params: CreatePositionParams): Promise<CreatePositionResult | undefined> {
+export async function createPosition(params: CreatePositionParams): Promise<CreatePositionResult> {
   // ─── 1) クライアント＆アカウント ───
   const publicClient = getPublicClient();
   const walletClient = getWalletClient();
@@ -30,28 +25,21 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
 
   // ─── 2) パラメータ展開 ───
   const {
-    token0: token0Address,
-    token1: token1Address,
-    fee,
-    tickSpacing,
+    poolData,
     amount0,
     amount1,
     tickLower,
     tickUpper,
-    priceRangePercent = POSITION_CONFIG.DEFAULT_PRICE_RANGE_PERCENT,
     slippageTolerance = TX_CONFIG.SLIPPAGE_TOLERANCE,
-    // より長いデッドラインを設定（10分→30分）
     deadline = Math.floor(Date.now() / 1_000) + 30 * 60,
   } = params;
 
   // ─── 3) トークン & プール情報 ───
-  const token0 = getTokenByAddress(token0Address);
-  const token1 = getTokenByAddress(token1Address);
-  logger.info(`Creating ${token0.symbol}/${token1.symbol} @ fee=${fee / 10000}%`);
-  const poolData = await getPoolData(token0, token1, fee, tickSpacing);
-  if (tickLower == null || tickUpper == null) {
-    throw new Error('tickLower or tickUpper is null');
-  }
+  const token0 = poolData.token0;
+  const token1 = poolData.token1;
+  const token0Address = token0.address;
+  const token1Address = token1.address;
+  logger.info(`Creating ${token0.symbol}/${token1.symbol} @ fee=${poolData.fee / 10000}%`);
 
   // ─── 4) Pool & Position インスタンス ───
   const pool = new Pool(
@@ -146,159 +134,124 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
   const slippagePct = new Percent(Math.floor(slippageTolerance * 100), 10_000);
   logger.info(`Slippage tolerance: ${slippagePct.toFixed(2)}%`);
 
-  try {
-    // ─── 6) Permit2 nonce取得 ───
-    // token0のnonceを取得
-    const allowance0 = await publicClient.readContract({
-      address: CONTRACTS.PERMIT2,
-      abi: PERMIT2_ABI,
-      functionName: 'allowance',
-      args: [owner, token0Address as Address, CONTRACTS.POSITION_MANAGER],
-    });
-    const nonce0 = allowance0[2]; // [amount, expiration, nonce]
+  // ─── 6) Permit2 nonce取得 ───
+  // token0のnonceを取得
+  const allowance0 = await publicClient.readContract({
+    address: CONTRACTS.PERMIT2,
+    abi: PERMIT2_ABI,
+    functionName: 'allowance',
+    args: [owner, token0Address as Address, CONTRACTS.POSITION_MANAGER],
+  });
+  const nonce0 = allowance0[2]; // [amount, expiration, nonce]
 
-    // token1のnonceを取得
-    const allowance1 = await publicClient.readContract({
-      address: CONTRACTS.PERMIT2,
-      abi: PERMIT2_ABI,
-      functionName: 'allowance',
-      args: [owner, token1Address as Address, CONTRACTS.POSITION_MANAGER],
-    });
-    const nonce1 = allowance1[2]; // [amount, expiration, nonce]
+  // token1のnonceを取得
+  const allowance1 = await publicClient.readContract({
+    address: CONTRACTS.PERMIT2,
+    abi: PERMIT2_ABI,
+    functionName: 'allowance',
+    args: [owner, token1Address as Address, CONTRACTS.POSITION_MANAGER],
+  });
+  const nonce1 = allowance1[2]; // [amount, expiration, nonce]
 
-    logger.info(`Permit2 nonce0 (${token0.symbol}): ${nonce0}`);
-    logger.info(`Permit2 nonce1 (${token1.symbol}): ${nonce1}`);
+  // ─── 7) 許可データ作成 ───
+  // 最大値の設定（2^160-1）
+  const MAX_UINT160 = 2n ** 160n - 1n;
+  // permit2のdetailsデータを作成
+  const permit = {
+    details: [
+      {
+        token: token0.address,
+        amount: MAX_UINT160.toString(),
+        expiration: deadline.toString(),
+        nonce: nonce0.toString(),
+      },
+      {
+        token: token1.address,
+        amount: MAX_UINT160.toString(),
+        expiration: deadline.toString(),
+        nonce: nonce1.toString(),
+      },
+    ],
+    spender: CONTRACTS.POSITION_MANAGER,
+    sigDeadline: deadline.toString(),
+  };
 
-    const commonDeadline = Math.floor(Date.now() / 1_000) + 30 * 60;
-    // ─── 7) 許可データ作成 ───
-    // 最大値の設定（2^160-1）
-    const MAX_UINT160 = 2n ** 160n - 1n;
-    // permit2のdetailsデータを作成
-    const permit = {
-      details: [
-        {
-          token: token0.address,
-          amount: MAX_UINT160.toString(),
-          expiration: commonDeadline.toString(),
-          nonce: nonce0.toString(),
-        },
-        {
-          token: token1.address,
-          amount: MAX_UINT160.toString(),
-          expiration: commonDeadline.toString(),
-          nonce: nonce1.toString(),
-        },
-      ],
-      spender: CONTRACTS.POSITION_MANAGER,
-      sigDeadline: commonDeadline.toString(),
-    };
+  // ─── 8) EIP-712署名の作成 ───
 
-    // ─── 8) EIP-712署名の作成 ───
+  // 3-2) EIP‑712 署名
+  const signature = await walletClient.signTypedData({
+    account,
+    domain: PERMIT2_DOMAIN(chainId),
+    types: PERMIT2_TYPES,
+    primaryType: 'PermitBatch',
+    message: permit,
+  });
 
-    logger.info('Signing EIP-712 message...');
-    const PERMIT2_TYPES: Record<string, TypedDataField[]> = {
-      PermitDetails: [
-        { name: 'token', type: 'address' },
-        { name: 'amount', type: 'uint160' },
-        { name: 'expiration', type: 'uint48' },
-        { name: 'nonce', type: 'uint48' },
-      ],
-      PermitBatch: [
-        { name: 'details', type: 'PermitDetails[]' },
-        { name: 'spender', type: 'address' },
-        { name: 'sigDeadline', type: 'uint256' },
-      ],
-    };
-    // 3-2) EIP‑712 署名
-    const signature = await walletClient.signTypedData({
-      account,
-      domain: PERMIT2_DOMAIN(chainId),
-      types: PERMIT2_TYPES,
-      primaryType: 'PermitBatch',
-      message: permit,
-    });
+  // ─── 9) トランザクション作成 ───
 
-    // ─── PermitBatch calldata エンコード ───
-    const permitCalldata = V4PositionManager.encodePermitBatch(
-      owner,
-      permit, // ここも同じ permit オブジェクトをそのまま渡す
+  logger.info(`Calculating add liquidity parameters...`);
+  // バッチPermitを含まない基本的な流動性追加パラメータを取得
+  const { calldata: liqCalldata, value: rawLiqValue } = V4PositionManager.addCallParameters(pos, {
+    slippageTolerance: slippagePct,
+    recipient: owner as Address,
+    deadline: deadline.toString(),
+    // 個別にパーミットを処理するために取り除く
+    batchPermit: {
+      owner: owner as Address,
+      permitBatch: permit,
       signature,
-    );
+    },
+  });
 
-    // ─── 9) トランザクション作成 ───
-    // 分解してステップごとにチェック
-    logger.info(`Encoding permitBatch...`);
-    // const permitCalldata = V4PositionManager.encodePermitBatch(owner as Address, permitDataForEncode, signature);
+  // valueの処理
+  const liqValue = Array.isArray(rawLiqValue) ? rawLiqValue[0] : rawLiqValue;
+  logger.info(`Liquidity value: ${liqValue}`);
 
-    logger.info(`Calculating add liquidity parameters...`);
-    // バッチPermitを含まない基本的な流動性追加パラメータを取得
-    const { calldata: liqCalldata, value: rawLiqValue } = V4PositionManager.addCallParameters(pos, {
-      slippageTolerance: slippagePct,
-      recipient: owner as Address,
-      deadline: commonDeadline.toString(),
-      // 個別にパーミットを処理するために取り除く
-      // batchPermit: {
-      //   owner: owner as Address,
-      //   permitBatch: permitData,
-      //   signature,
-      // },
-    });
+  // ─── 10) トランザクション送信 ───
 
-    // valueの処理
-    const liqValue = Array.isArray(rawLiqValue) ? rawLiqValue[0] : rawLiqValue;
-    logger.info(`Liquidity value: ${liqValue}`);
+  const calls = [liqCalldata];
 
-    // ─── 10) トランザクション送信 ───
-    // permitとaddLiquidityを別々に処理するマルチコール
-    const calls = [permitCalldata, liqCalldata];
+  // ガスリミットを明示的に増加させる
+  const txHash = await walletClient.writeContract({
+    account,
+    address: CONTRACTS.POSITION_MANAGER as Address,
+    chain: unichain,
+    abi: POSITION_MANAGER_ABI,
+    functionName: 'multicall',
+    args: [calls],
+    value: BigInt(liqValue),
+  });
 
-    logger.info(`Sending transaction with ${calls.length} calls`);
-    logger.info(`Transaction data length: ${calls.join('').length}`);
+  logger.info(`Transaction sent: ${txHash}`);
+  const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
 
-    // ガスリミットを明示的に増加させる
-    const txHash = await walletClient.writeContract({
-      account,
-      address: CONTRACTS.POSITION_MANAGER as Address,
-      chain: unichain,
-      abi: POSITION_MANAGER_ABI,
-      functionName: 'multicall',
-      args: [calls],
-      value: BigInt(liqValue),
-    });
+  if (receipt.status === 'success') {
+    logger.info(`Transaction confirmed: ${receipt.transactionHash}`);
 
-    logger.info(`Transaction sent: ${txHash}`);
-    const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
-
-    if (receipt.status === 'success') {
-      logger.info(`Transaction confirmed: ${receipt.transactionHash}`);
-
-      // ─── 11) ポジション取得 & 結果返却 ───
-      const ids = await getV4Positions(BOT_ADDRESS);
-      const latest = ids.at(-1);
-      if (!latest) {
-        throw new Error('No position returned');
-      }
-      const info = await getPositionInfo(latest.tokenId);
-      if (!info) {
-        throw new Error('Position info not found');
-      }
-
-      return {
-        success: true,
-        tokenId: latest.tokenId,
-        liquidity: info.liquidity.toString(),
-        amount0Used: info.token0BalanceFormatted,
-        amount1Used: info.token1BalanceFormatted,
-        tickLower,
-        tickUpper,
-        priceLower: info.priceLower.toString(),
-        priceUpper: info.priceUpper.toString(),
-        transactionHash: receipt.transactionHash,
-      };
-    } else {
-      throw new Error(`Transaction failed: ${receipt.transactionHash}`);
+    // ─── 11) ポジション取得 & 結果返却 ───
+    const ids = await getV4Positions(BOT_ADDRESS);
+    const latest = ids.at(-1);
+    if (!latest) {
+      throw new Error('No position returned');
     }
-  } catch (error) {
-    logger.error(`Error creating position: ${error}`);
+    const info = await getPositionInfo(latest.tokenId);
+    if (!info) {
+      throw new Error('Position info not found');
+    }
+
+    return {
+      success: true,
+      tokenId: latest.tokenId,
+      liquidity: info.liquidity.toString(),
+      amount0Used: info.token0BalanceFormatted,
+      amount1Used: info.token1BalanceFormatted,
+      tickLower,
+      tickUpper,
+      priceLower: info.priceLower.toString(),
+      priceUpper: info.priceUpper.toString(),
+      transactionHash: receipt.transactionHash,
+    };
+  } else {
+    throw new Error(`Transaction failed: ${receipt.transactionHash}`);
   }
 }

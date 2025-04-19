@@ -5,6 +5,10 @@ import 'dotenv/config';
 import { TypedDataDomain } from 'viem';
 import { Address, privateKeyToAddress } from 'viem/accounts';
 
+export const MONITORING_INTERVAL_MINUTES = 5;
+export const OUT_OF_RANGE_THRESHOLD = 3;
+export const BALANCE_RATIO = 0.3; // Ratio of available balance to use for creating positions
+
 export enum SwapType {
   UNIVERSAL_ROUTER = 'UNIVERSAL_ROUTER',
 }
@@ -52,9 +56,6 @@ export const POSITION_CONFIG = {
 
 export const BOT_ADDRESS = privateKeyToAddress(process.env.PRIVATE_KEY as Address);
 
-export const MONITORING_INTERVAL_MINUTES = 5;
-export const OUT_OF_RANGE_THRESHOLD = 3;
-
 export function PERMIT2_DOMAIN(chainId: number): TypedDataDomain {
   return {
     name: 'Permit2',
@@ -62,3 +63,17 @@ export function PERMIT2_DOMAIN(chainId: number): TypedDataDomain {
     verifyingContract: CONTRACTS.PERMIT2,
   };
 }
+
+export const PERMIT2_TYPES = {
+  PermitDetails: [
+    { name: 'token', type: 'address' },
+    { name: 'amount', type: 'uint160' },
+    { name: 'expiration', type: 'uint48' },
+    { name: 'nonce', type: 'uint48' },
+  ],
+  PermitBatch: [
+    { name: 'details', type: 'PermitDetails[]' },
+    { name: 'spender', type: 'address' },
+    { name: 'sigDeadline', type: 'uint256' },
+  ],
+};
