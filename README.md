@@ -40,20 +40,26 @@ GRAPH_KEY=your_api_key
 # Optional: Percentage of balance to use (defaults to 50%)
 ```
 
+## Config Param
+
+```
+export const BALANCE_RATIO = 5n;
+```
+
 ## Example Usage
 
 The logs show the bot:
 
 1. Starting up and analyzing existing positions
-2. Creating initial positions with USDC/USDT at 0.01% fee
-3. Setting a narrow price range (1.0001 - 1.0002)
+2. Creating initial positions with USDC/USDT and ETH/USDT
+3. Setting a narrow price range (minimum tick range)
 4. Approving tokens to Permit2 contract
 5. Creating positions with calculated amounts
 6. Monitoring every 5 minutes and creating new positions as needed
 
 ## Notes
 
-- The bot uses a percentage of your token balance for each position (default 50%)
+- The bot uses a percentage of your token balance for each position (default 5%)
 - Positions are created with a very narrow price range for stablecoin pairs
 - Slippage tolerance is set at 0.50%
 - The bot handles signing and transaction submission automatically
