@@ -5,7 +5,7 @@ import type { Address } from 'viem';
 import { encodeFunctionData, formatUnits, parseUnits, zeroAddress } from 'viem';
 import { getPublicClient, getWalletClient, getAccountAddress } from '../utils/client';
 import logger from '../utils/logger';
-import { CONTRACTS, PERMIT2_DOMAIN, PERMIT2_TYPES, TX_CONFIG } from '../config/config';
+import { CONTRACTS, TX_CONFIG } from '../config/config';
 import { getTokenByAddress, TICK_SPACINGS, FeeAmount } from '../config/tokens';
 import { UNIVERSAL_ROUTER_ABI, PERMIT2_ABI, V4QUOTER_ABI } from '../abis';
 import type { SwapParams, SwapResult } from '../types';
@@ -43,11 +43,25 @@ async function buildPermit2Calldata(owner: Address, token: Address, amount: bigi
   // Sign EIP-712
   const wallet = getWalletClient();
   const chainId = await wallet.getChainId();
+  const domain = { name: 'Permit2', version: '1', chainId, verifyingContract: CONTRACTS.PERMIT2 as Address };
+  const types = {
+    PermitDetails: [
+      { name: 'token', type: 'address' },
+      { name: 'amount', type: 'uint160' },
+      { name: 'expiration', type: 'uint48' },
+      { name: 'nonce', type: 'uint48' },
+    ],
+    PermitBatch: [
+      { name: 'details', type: 'PermitDetails[]' },
+      { name: 'spender', type: 'address' },
+      { name: 'sigDeadline', type: 'uint256' },
+    ],
+  };
 
   const signature = await wallet.signTypedData({
     account: owner,
-    domain: PERMIT2_DOMAIN(chainId),
-    types: PERMIT2_TYPES,
+    domain,
+    types,
     primaryType: 'PermitBatch',
     message: permitBatch,
   });

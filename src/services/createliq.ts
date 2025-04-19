@@ -1,9 +1,9 @@
 import { CurrencyAmount, Percent } from '@uniswap/sdk-core';
 import { tickToPrice, priceToClosestTick, Pool, Position, V4PositionManager } from '@uniswap/v4-sdk';
 import type { Address } from 'viem';
-import { formatUnits, parseUnits, zeroAddress } from 'viem';
+import { formatUnits, parseUnits, recoverAddress, zeroAddress } from 'viem';
 import { getPublicClient, getWalletAccount, getWalletClient } from '../utils/client';
-import { POSITION_CONFIG, TX_CONFIG, CONTRACTS, BOT_ADDRESS, PERMIT2_DOMAIN, PERMIT2_TYPES } from '../config/config';
+import { POSITION_CONFIG, TX_CONFIG, CONTRACTS, BOT_ADDRESS, PERMIT2_DOMAIN } from '../config/config';
 import { getTokenByAddress } from '../config/tokens';
 import { nearestUsableTick } from '../utils/tick/tickMath';
 import { getPositionInfo, getV4Positions } from './positions';
@@ -13,11 +13,18 @@ import { unichain } from '../config/chains';
 import { ERC20_ABI, PERMIT2_ABI, POSITION_MANAGER_ABI } from '../abis';
 import { getPoolData } from './pool';
 import JSBI from 'jsbi';
-
+import type { TypedDataField } from '@ethersproject/abstract-signer';
+import { _TypedDataEncoder } from '@ethersproject/hash';
+import { arrayify } from '@ethersproject/bytes';
 export async function createPosition(params: CreatePositionParams): Promise<CreatePositionResult | undefined> {
   // ─── 1) クライアント＆アカウント ───
   const publicClient = getPublicClient();
   const walletClient = getWalletClient();
+  const chainId = await walletClient.getChainId();
+  const account = getWalletAccount();
+  if (chainId !== unichain.id) {
+    throw new Error(`Chain ID mismatch: expected ${unichain.id}, got ${chainId}`);
+  }
   const owner = BOT_ADDRESS;
   if (!owner) throw new Error('Wallet not connected');
 
@@ -167,58 +174,61 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
     // 最大値の設定（2^160-1）
     const MAX_UINT160 = 2n ** 160n - 1n;
     // permit2のdetailsデータを作成
-    const permitData = {
+    const permit = {
       details: [
         {
-          token: token0.address as Address,
+          token: token0.address,
           amount: MAX_UINT160.toString(),
           expiration: commonDeadline.toString(),
-          nonce: nonce0,
+          nonce: nonce0.toString(),
         },
         {
-          token: token1.address as Address,
+          token: token1.address,
           amount: MAX_UINT160.toString(),
           expiration: commonDeadline.toString(),
-          nonce: nonce1,
+          nonce: nonce1.toString(),
         },
       ],
-      spender: CONTRACTS.POSITION_MANAGER as Address,
+      spender: CONTRACTS.POSITION_MANAGER,
       sigDeadline: commonDeadline.toString(),
     };
 
-    // 署名用のメッセージ
-    const eipMsg = {
-      details: permitData.details,
-      spender: permitData.spender,
-      sigDeadline: permitData.sigDeadline,
-    };
-    logger.info(`eipMsg: ${JSON.stringify(eipMsg, null, 2)}`);
-    logger.info(`EIP-712 message prepared with deadline: ${deadline} (${new Date(deadline * 1000).toISOString()})`);
-
     // ─── 8) EIP-712署名の作成 ───
-    const chainId = await walletClient.getChainId();
-    if (chainId !== unichain.id) {
-      throw new Error(`Chain ID mismatch: expected ${unichain.id}, got ${chainId}`);
-    }
 
-    const account = getWalletAccount();
     logger.info('Signing EIP-712 message...');
-
+    const PERMIT2_TYPES: Record<string, TypedDataField[]> = {
+      PermitDetails: [
+        { name: 'token', type: 'address' },
+        { name: 'amount', type: 'uint160' },
+        { name: 'expiration', type: 'uint48' },
+        { name: 'nonce', type: 'uint48' },
+      ],
+      PermitBatch: [
+        { name: 'details', type: 'PermitDetails[]' },
+        { name: 'spender', type: 'address' },
+        { name: 'sigDeadline', type: 'uint256' },
+      ],
+    };
+    // 3-2) EIP‑712 署名
     const signature = await walletClient.signTypedData({
       account,
       domain: PERMIT2_DOMAIN(chainId),
       types: PERMIT2_TYPES,
       primaryType: 'PermitBatch',
-      message: eipMsg,
+      message: permit,
     });
 
-    logger.info(`Signature generated: ${signature.substring(0, 10)}...`);
+    // ─── PermitBatch calldata エンコード ───
+    const permitCalldata = V4PositionManager.encodePermitBatch(
+      owner,
+      permit, // ここも同じ permit オブジェクトをそのまま渡す
+      signature,
+    );
 
     // ─── 9) トランザクション作成 ───
     // 分解してステップごとにチェック
-
     logger.info(`Encoding permitBatch...`);
-    const permitCalldata = V4PositionManager.encodePermitBatch(owner as Address, permitData, signature);
+    // const permitCalldata = V4PositionManager.encodePermitBatch(owner as Address, permitDataForEncode, signature);
 
     logger.info(`Calculating add liquidity parameters...`);
     // バッチPermitを含まない基本的な流動性追加パラメータを取得
