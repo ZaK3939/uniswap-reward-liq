@@ -1,20 +1,95 @@
-import { Percent } from '@uniswap/sdk-core';
-import { tickToPrice, Pool, Position, V4PositionManager } from '@uniswap/v4-sdk';
+import { Ether, Percent } from '@uniswap/sdk-core';
+import { tickToPrice, Pool, Position, V4PositionManager, AddLiquidityOptions, MintOptions } from '@uniswap/v4-sdk';
 import type { Address } from 'viem';
 import { formatUnits, parseUnits, zeroAddress } from 'viem';
 import { getPublicClient, getWalletAccount, getWalletClient } from '../utils/client';
-import { TX_CONFIG, CONTRACTS, BOT_ADDRESS, PERMIT2_DOMAIN, PERMIT2_TYPES } from '../config/config';
-import { getPositionInfo, getV4Positions } from './positions';
+import { TX_CONFIG, CONTRACTS, BOT_ADDRESS, PERMIT2_DOMAIN, PERMIT2_TYPES, MAX_UINT160 } from '../config/config';
+import { getPositionInfo } from './positions';
 import logger from '../utils/logger';
 import type { CreatePositionParams, CreatePositionResult } from '../types';
 import { unichain } from '../config/chains';
-import { ERC20_ABI, PERMIT2_ABI, POSITION_MANAGER_ABI } from '../abis';
+import { PERMIT2_ABI, POSITION_MANAGER_ABI } from '../abis';
+import { isNative } from '../config/tokens';
+import { ensureApproval } from '../utils/approve';
+
+/**
+ * Build the details array for Permit2 batch permit.
+ */
+async function buildPermitDetails(
+  owner: Address,
+  tokens: { address: Address; decimals: number }[],
+  deadline: bigint,
+): Promise<
+  {
+    token: Address;
+    amount: string;
+    expiration: string;
+    nonce: string;
+  }[]
+> {
+  const details: {
+    token: Address;
+    amount: string;
+    expiration: string;
+    nonce: string;
+  }[] = [];
+  const publicClient = getPublicClient();
+  for (const { address, decimals } of tokens) {
+    if (isNative(address)) {
+      logger.info(`Native ETH – skipping Permit2 details: ${address}`);
+      continue;
+    }
+
+    // Read [amount, expiration, nonce] from Permit2 contract
+    const [, , nonce] = await publicClient.readContract({
+      account: getWalletAccount(),
+      address: CONTRACTS.PERMIT2,
+      abi: PERMIT2_ABI,
+      functionName: 'allowance',
+      args: [owner, address, CONTRACTS.POSITION_MANAGER],
+    });
+
+    details.push({
+      token: address,
+      amount: MAX_UINT160.toString(),
+      expiration: deadline.toString(),
+      nonce: nonce.toString(),
+    });
+  }
+
+  return details;
+}
+
+async function signPermit2Payload(payload: {
+  details: {
+    token: Address;
+    amount: string;
+    expiration: string;
+    nonce: string;
+  }[];
+  spender: Address;
+  sigDeadline: string;
+}): Promise<string> {
+  const walletClient = getWalletClient();
+  const account = getWalletAccount();
+  const chainId = await walletClient.getChainId();
+  const signature = await walletClient.signTypedData({
+    domain: PERMIT2_DOMAIN(chainId),
+    types: PERMIT2_TYPES,
+    primaryType: 'PermitBatch',
+    message: payload,
+    account,
+  });
+  return signature;
+}
+
 export async function createPosition(params: CreatePositionParams): Promise<CreatePositionResult> {
   // ─── 1) Client & Account ───
   const publicClient = getPublicClient();
   const walletClient = getWalletClient();
-  const chainId = await walletClient.getChainId();
   const account = getWalletAccount();
+  const chainId = await walletClient.getChainId();
+
   if (chainId !== unichain.id) {
     throw new Error(`Chain ID mismatch: expected ${unichain.id}, got ${chainId}`);
   }
@@ -35,14 +110,14 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
   // ─── 3) Token & Pool information ───
   const token0 = poolData.token0;
   const token1 = poolData.token1;
-  const token0Address = token0.address;
-  const token1Address = token1.address;
   logger.info(`Creating ${token0.symbol}/${token1.symbol} @ fee=${poolData.fee / 10000}%`);
 
+  const currency0 = poolData.token0.address === zeroAddress ? Ether.onChain(chainId) : poolData.token0;
+  const currency1 = poolData.token1.address === zeroAddress ? Ether.onChain(chainId) : poolData.token1;
   // ─── 4) Pool & Position instances ───
   const pool = new Pool(
-    poolData.token0,
-    poolData.token1,
+    currency0,
+    currency1,
     poolData.fee,
     poolData.tickSpacing,
     zeroAddress,
@@ -79,128 +154,51 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
     ).toSignificant(6)}`,
   );
 
-  const MAX_UINT256 = 2n ** 256n - 1n;
-  const approval0 = (await publicClient.readContract({
-    address: token0Address as Address,
-    abi: ERC20_ABI,
-    functionName: 'allowance',
-    args: [owner, CONTRACTS.PERMIT2],
-  })) as bigint;
-
-  // Check token1 approval
-  const approval1 = (await publicClient.readContract({
-    address: token1Address as Address,
-    abi: ERC20_ABI,
-    functionName: 'allowance',
-    args: [owner, CONTRACTS.PERMIT2],
-  })) as bigint;
-
-  if (approval0 < parseUnits(amount0.toString(), token0.decimals) * 2n) {
-    logger.info(`Approving ${token0.symbol} to Permit2...`);
-    const approveTx0 = await walletClient.writeContract({
-      account: getWalletAccount(),
-      address: token0Address as Address,
-      abi: ERC20_ABI,
-      chain: unichain,
-      functionName: 'approve',
-      args: [CONTRACTS.PERMIT2, MAX_UINT256],
-    });
-    await publicClient.waitForTransactionReceipt({ hash: approveTx0 });
-    logger.info(`${token0.symbol} approved to Permit2`);
-  } else {
-    logger.info(`${token0.symbol} already has sufficient approval to Permit2`);
-  }
-
-  // If token1 approval is insufficient, approve it
-  if (approval1 < parseUnits(amount1.toString(), token1.decimals) * 2n) {
-    logger.info(`Approving ${token1.symbol} to Permit2...`);
-    const approveTx1 = await walletClient.writeContract({
-      account: getWalletAccount(),
-      address: token1Address as Address,
-      abi: ERC20_ABI,
-      chain: unichain,
-      functionName: 'approve',
-      args: [CONTRACTS.PERMIT2, MAX_UINT256],
-    });
-    await publicClient.waitForTransactionReceipt({ hash: approveTx1 });
-    logger.info(`${token1.symbol} approved to Permit2`);
-  } else {
-    logger.info(`${token1.symbol} already has sufficient approval to Permit2`);
-  }
+  // Step 1: Ensure approvals for ERC20 tokens
+  await ensureApproval(owner, token0.address, parseUnits(amount0.toString(), token0.decimals));
+  await ensureApproval(owner, token1.address, parseUnits(amount1.toString(), token1.decimals));
 
   // ─── 5) Slippage settings ───
   const slippagePct = new Percent(Math.floor(slippageTolerance * 100), 10_000);
   logger.info(`Slippage tolerance: ${slippagePct.toFixed(2)}%`);
 
-  // ─── 6) Get Permit2 nonce ───
-  // Get nonce for token0
-  const allowance0 = await publicClient.readContract({
-    address: CONTRACTS.PERMIT2,
-    abi: PERMIT2_ABI,
-    functionName: 'allowance',
-    args: [owner, token0Address as Address, CONTRACTS.POSITION_MANAGER],
-  });
-  const nonce0 = allowance0[2]; // [amount, expiration, nonce]
+  // ─── 6) Get batch permit ───
+  const details = await buildPermitDetails(owner, [token0, token1], BigInt(deadline));
 
-  // Get nonce for token1
-  const allowance1 = await publicClient.readContract({
-    address: CONTRACTS.PERMIT2,
-    abi: PERMIT2_ABI,
-    functionName: 'allowance',
-    args: [owner, token1Address as Address, CONTRACTS.POSITION_MANAGER],
-  });
-  const nonce1 = allowance1[2]; // [amount, expiration, nonce]
-
-  // ─── 7) Create permission data ───
-  // Set maximum value (2^160-1)
-  const MAX_UINT160 = 2n ** 160n - 1n;
-  // Create permit2 details data
-  const permit = {
-    details: [
-      {
-        token: token0.address,
-        amount: MAX_UINT160.toString(),
-        expiration: deadline.toString(),
-        nonce: nonce0.toString(),
-      },
-      {
-        token: token1.address,
-        amount: MAX_UINT160.toString(),
-        expiration: deadline.toString(),
-        nonce: nonce1.toString(),
-      },
-    ],
+  const permit2Payload = {
+    details,
     spender: CONTRACTS.POSITION_MANAGER,
     sigDeadline: deadline.toString(),
   };
+  const signature = await signPermit2Payload(permit2Payload);
 
-  // ─── 8) Create EIP-712 signature ───
-  const signature = await walletClient.signTypedData({
-    account,
-    domain: PERMIT2_DOMAIN(chainId),
-    types: PERMIT2_TYPES,
-    primaryType: 'PermitBatch',
-    message: permit,
-  });
-
-  // ─── 9) Create transaction ───
-  logger.info(`Calculating add liquidity parameters...`);
-  // Get basic liquidity addition parameters without batch Permit
-  const { calldata: liqCalldata, value: rawLiqValue } = V4PositionManager.addCallParameters(pos, {
-    slippageTolerance: slippagePct,
-    recipient: owner as Address,
-    deadline: deadline.toString(),
-    // Remove to process permits individually
+  // Base add-liquidity options (common to all pools)
+  // 2) Construct a MintOptions object
+  const mintOpts: MintOptions = {
+    slippageTolerance: slippagePct, // Percent
+    deadline: deadline.toString(), // BigintIsh
+    recipient: owner as Address, // required for Mint
     batchPermit: {
+      // optional batch permit
       owner: owner as Address,
-      permitBatch: permit,
+      permitBatch: permit2Payload,
       signature,
     },
-  });
+    ...(pool.token0.isNative
+      ? { useNative: pool.token0 as Ether }
+      : pool.token1.isNative
+      ? { useNative: pool.token1 as Ether }
+      : {}), // optional `useNative`
+    // createPool?: boolean,                  // (optional)
+    // migrate?: boolean,                     // (optional)
+    // sqrtPriceX96?: BigintIsh,              // (optional)
+  };
 
-  // Process value
-  const liqValue = Array.isArray(rawLiqValue) ? rawLiqValue[0] : rawLiqValue;
-  logger.info(`Liquidity value: ${liqValue}`);
+  // 3) Call the SDK
+  const { calldata: liqCalldata, value: rawLiqValue } = V4PositionManager.addCallParameters(pos, mintOpts);
+
+  // Log the amount of ETH (in wei) that will be attached to the transaction
+  logger.info('ETH to send (wei):', BigInt(rawLiqValue.toString()));
 
   // ─── 10) Send transaction ───
   const calls = [liqCalldata];
@@ -213,7 +211,7 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
     abi: POSITION_MANAGER_ABI,
     functionName: 'multicall',
     args: [calls],
-    value: BigInt(liqValue),
+    value: BigInt(rawLiqValue.toString()),
   });
 
   logger.info(`Transaction sent: ${txHash}`);
@@ -223,7 +221,12 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
     logger.info(`Transaction confirmed: ${receipt.transactionHash}`);
 
     // ─── 11) Get position & return result ───
-    const latest = receipt.logs[2].topics[3] as string;
+    let latest: string;
+    if (pool.token0.isNative || pool.token1.isNative) {
+      latest = receipt.logs[1].topics[3] as string;
+    } else {
+      latest = receipt.logs[2].topics[3] as string;
+    }
     logger.info(`Latest position: ${latest}`);
     const info = await getPositionInfo(BigInt(latest));
 

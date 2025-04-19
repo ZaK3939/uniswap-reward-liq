@@ -7,11 +7,13 @@ import { Address, privateKeyToAddress } from 'viem/accounts';
 
 export const MONITORING_INTERVAL_MINUTES = 2;
 export const OUT_OF_RANGE_THRESHOLD = 5;
-export const BALANCE_RATIO = 0.3; // Ratio of available balance to use for creating positions
+export const BALANCE_RATIO = 5n; // 5% Ratio of available balance to use for creating positions
 
 export enum SwapType {
   UNIVERSAL_ROUTER = 'UNIVERSAL_ROUTER',
 }
+
+export const MAX_UINT160 = 2n ** 160n - 1n;
 // Network configuration
 export const UNICHAIN_CHAIN_ID = 130; // Replace with actual Unichain Chain ID
 

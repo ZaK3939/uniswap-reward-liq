@@ -2,6 +2,7 @@ import { Address, formatUnits, parseAbi } from 'viem';
 import { getPublicClient, getAccountAddress } from './client';
 import logger from './logger';
 import { ERC20_ABI } from '../abis';
+import { isNative } from '../config/tokens';
 
 /**
  * Get balances for multiple ERC20 tokens
@@ -9,7 +10,7 @@ import { ERC20_ABI } from '../abis';
  * @param tokenAddresses Array of token contract addresses
  * @returns Promise with token balance information
  */
-export async function getMultipleERC20Balances(
+export async function getMultipleTokenBalances(
   address: Address,
   tokenAddresses: Address[],
 ): Promise<
@@ -22,53 +23,60 @@ export async function getMultipleERC20Balances(
     error?: string;
   }[]
 > {
-  // Get the client for each call
   const client = getPublicClient();
 
   const balances = await Promise.all(
     tokenAddresses.map(async (tokenAddress) => {
       try {
-        // Get token balance in wei
-        const balanceWei = (await client.readContract({
-          address: tokenAddress,
-          abi: ERC20_ABI,
-          functionName: 'balanceOf',
-          args: [address],
-        })) as bigint;
+        let balanceWei: bigint;
+        let decimals: number;
+        let symbol: string;
 
-        // Get token decimals
-        const decimals = await client.readContract({
-          address: tokenAddress,
-          abi: ERC20_ABI,
-          functionName: 'decimals',
-        });
+        if (isNative(tokenAddress)) {
+          // Native ETH balance
+          balanceWei = await client.getBalance({ address });
+          decimals = 18;
+          symbol = 'ETH';
+        } else {
+          // ERC20 token balance, decimals, symbol
+          balanceWei = (await client.readContract({
+            address: tokenAddress,
+            abi: ERC20_ABI,
+            functionName: 'balanceOf',
+            args: [address],
+          })) as bigint;
 
-        // Get token symbol
-        const symbol = (await client.readContract({
-          address: tokenAddress,
-          abi: ERC20_ABI,
-          functionName: 'symbol',
-        })) as string;
+          const rawDecimals = (await client.readContract({
+            address: tokenAddress,
+            abi: ERC20_ABI,
+            functionName: 'decimals',
+          })) as bigint;
+          decimals = Number(rawDecimals);
 
-        // Format the balance
-        const balanceFormatted = Number(formatUnits(balanceWei, Number(decimals)));
+          symbol = (await client.readContract({
+            address: tokenAddress,
+            abi: ERC20_ABI,
+            functionName: 'symbol',
+          })) as string;
+        }
+
+        const balanceFormatted = Number(formatUnits(balanceWei, decimals));
 
         return {
           tokenAddress,
           symbol,
           balanceWei,
           balanceFormatted,
-          decimals: Number(decimals),
+          decimals,
         };
       } catch (error) {
-        // Log error with your logger
-        logger.error(`Error getting balance for token ${tokenAddress}:`, error);
+        logger.error(`Error getting balance for ${tokenAddress}:`, error);
         return {
           tokenAddress,
-          symbol: 'ERROR',
+          symbol: isNative(tokenAddress) ? 'ETH' : 'ERROR',
           balanceWei: BigInt(0),
           balanceFormatted: 0,
-          decimals: 0,
+          decimals: isNative(tokenAddress) ? 18 : 0,
           error: String(error),
         };
       }
@@ -94,7 +102,7 @@ export async function getTokenPairBalances(
   const walletAddress = address || getAccountAddress();
 
   try {
-    const balances = await getMultipleERC20Balances(walletAddress, [token0Address, token1Address]);
+    const balances = await getMultipleTokenBalances(walletAddress, [token0Address, token1Address]);
     return {
       token0: balances[0],
       token1: balances[1],

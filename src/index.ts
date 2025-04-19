@@ -10,7 +10,8 @@ import { CreatePositionParams } from './types';
 import { computeCounterpartyAmounts } from './utils/calcAmountForliquidity';
 
 // Constants
-const TOKEN_PAIR = TOKEN_PAIRS.USDC_USDT;
+// const TOKEN_PAIR = TOKEN_PAIRS.USDC_USDT;
+const TOKEN_PAIR = TOKEN_PAIRS.ETH_USDT;
 
 let currentPositionId: bigint | undefined = undefined;
 let outOfRangeCount = 0;

@@ -45,7 +45,7 @@ export async function computeCounterpartyAmounts(
 
   // 3) Extract raw balances
   //TODO: adjust to use small amounts compared to balance
-  const percentage = process.env.BALANCE_RATIO ? BigInt(Number(BALANCE_RATIO) * 100) : 50n; // 50% = 100n
+  const percentage = BALANCE_RATIO;
   const multiplier = 100n;
   const bal0Raw: bigint = (bal0.balanceWei * percentage) / multiplier;
   const bal1Raw: bigint = (bal1.balanceWei * percentage) / multiplier;

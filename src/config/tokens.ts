@@ -3,6 +3,7 @@
  */
 import { Token } from '@uniswap/sdk-core';
 import { UNICHAIN_CHAIN_ID } from './config';
+import ethAddress, { Address, zeroAddress } from 'viem';
 import logger from '../utils/logger';
 
 // Token addresses - replace with actual addresses on Unichain
@@ -42,19 +43,26 @@ const tokenCache = new Map<string, Token>();
  * @returns Token object
  */
 export function getTokenByAddress(address: string): Token {
-  const lowerAddress = address.toLowerCase();
-
-  if (tokenCache.has(lowerAddress)) {
-    return tokenCache.get(lowerAddress)!;
+  logger.info(`getTokenByAddress: ${address}`);
+  // Handle native ETH (zero address)
+  if (address === zeroAddress) {
+    return new Token(UNICHAIN_CHAIN_ID, zeroAddress as `0x${string}`, 18, 'ETH', 'Ether');
   }
+
+  // Return from cache if available
+  if (tokenCache.has(address)) {
+    return tokenCache.get(address)!;
+  }
+
+  // Look up token metadata using lowercase key
   const info = TOKEN_INFO[address as keyof typeof TOKEN_INFO];
   if (!info) {
     throw new Error(`Token info not found for address: ${address}`);
   }
 
+  // Create new Token instance and cache it
   const token = new Token(UNICHAIN_CHAIN_ID, address as `0x${string}`, info.decimals, info.symbol, info.name);
-
-  tokenCache.set(lowerAddress, token);
+  tokenCache.set(address, token);
   return token;
 }
 
@@ -80,10 +88,10 @@ export const TICK_SPACINGS: { [amount in FeeAmount]: number } = {
  * Common token pairs for convenience
  */
 export const TOKEN_PAIRS = {
-  WETH_USDC: {
-    tokenA: TOKEN_ADDRESSES.WETH,
-    tokenB: TOKEN_ADDRESSES.USDC,
-    name: 'WETH/USDC',
+  ETH_USDT: {
+    tokenA: zeroAddress,
+    tokenB: TOKEN_ADDRESSES.USDT,
+    name: 'ETH/USDT',
     feeTier: 3000,
     tickSpacing: 60,
   },
@@ -96,3 +104,7 @@ export const TOKEN_PAIRS = {
   },
   // Add more pairs as needed
 } as const;
+
+export function isNative(tokenAddress: Address) {
+  return tokenAddress === zeroAddress;
+}
