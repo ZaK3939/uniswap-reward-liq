@@ -4,15 +4,13 @@ import type { Address } from 'viem';
 import { formatUnits, parseUnits, zeroAddress } from 'viem';
 import { getPublicClient, getWalletAccount, getWalletClient } from '../utils/client';
 import { TX_CONFIG, CONTRACTS, BOT_ADDRESS, PERMIT2_DOMAIN, PERMIT2_TYPES } from '../config/config';
-import { getTokenByAddress } from '../config/tokens';
 import { getPositionInfo, getV4Positions } from './positions';
 import logger from '../utils/logger';
 import type { CreatePositionParams, CreatePositionResult } from '../types';
 import { unichain } from '../config/chains';
 import { ERC20_ABI, PERMIT2_ABI, POSITION_MANAGER_ABI } from '../abis';
-import { getPoolData } from './pool';
 export async function createPosition(params: CreatePositionParams): Promise<CreatePositionResult> {
-  // ─── 1) クライアント＆アカウント ───
+  // ─── 1) Client & Account ───
   const publicClient = getPublicClient();
   const walletClient = getWalletClient();
   const chainId = await walletClient.getChainId();
@@ -23,7 +21,7 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
   const owner = BOT_ADDRESS;
   if (!owner) throw new Error('Wallet not connected');
 
-  // ─── 2) パラメータ展開 ───
+  // ─── 2) Parameter extraction ───
   const {
     poolData,
     amount0,
@@ -34,14 +32,14 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
     deadline = Math.floor(Date.now() / 1_000) + 30 * 60,
   } = params;
 
-  // ─── 3) トークン & プール情報 ───
+  // ─── 3) Token & Pool information ───
   const token0 = poolData.token0;
   const token1 = poolData.token1;
   const token0Address = token0.address;
   const token1Address = token1.address;
   logger.info(`Creating ${token0.symbol}/${token1.symbol} @ fee=${poolData.fee / 10000}%`);
 
-  // ─── 4) Pool & Position インスタンス ───
+  // ─── 4) Pool & Position instances ───
   const pool = new Pool(
     poolData.token0,
     poolData.token1,
@@ -53,7 +51,7 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
     poolData.tick,
   );
 
-  // 値を確実に解析
+  // Parse values reliably
   logger.info(`amount0: ${amount0.toString()}, amount1: ${amount1.toString()}`);
   logger.info(
     `Creating position with amounts: ${formatUnits(amount0, token0.decimals)} ${token0.symbol}, ${formatUnits(
@@ -62,7 +60,7 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
     )} ${token1.symbol}`,
   );
 
-  // 流動性計算を正確に行う
+  // Calculate liquidity precisely
   const pos = Position.fromAmounts({
     pool,
     tickLower,
@@ -89,7 +87,7 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
     args: [owner, CONTRACTS.PERMIT2],
   })) as bigint;
 
-  // トークン1の承認チェック
+  // Check token1 approval
   const approval1 = (await publicClient.readContract({
     address: token1Address as Address,
     abi: ERC20_ABI,
@@ -113,7 +111,7 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
     logger.info(`${token0.symbol} already has sufficient approval to Permit2`);
   }
 
-  // トークン1の承認が不足している場合は、承認を行う
+  // If token1 approval is insufficient, approve it
   if (approval1 < parseUnits(amount1.toString(), token1.decimals) * 2n) {
     logger.info(`Approving ${token1.symbol} to Permit2...`);
     const approveTx1 = await walletClient.writeContract({
@@ -130,12 +128,12 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
     logger.info(`${token1.symbol} already has sufficient approval to Permit2`);
   }
 
-  // ─── 5) スリッページ設定 ───
+  // ─── 5) Slippage settings ───
   const slippagePct = new Percent(Math.floor(slippageTolerance * 100), 10_000);
   logger.info(`Slippage tolerance: ${slippagePct.toFixed(2)}%`);
 
-  // ─── 6) Permit2 nonce取得 ───
-  // token0のnonceを取得
+  // ─── 6) Get Permit2 nonce ───
+  // Get nonce for token0
   const allowance0 = await publicClient.readContract({
     address: CONTRACTS.PERMIT2,
     abi: PERMIT2_ABI,
@@ -144,7 +142,7 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
   });
   const nonce0 = allowance0[2]; // [amount, expiration, nonce]
 
-  // token1のnonceを取得
+  // Get nonce for token1
   const allowance1 = await publicClient.readContract({
     address: CONTRACTS.PERMIT2,
     abi: PERMIT2_ABI,
@@ -153,10 +151,10 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
   });
   const nonce1 = allowance1[2]; // [amount, expiration, nonce]
 
-  // ─── 7) 許可データ作成 ───
-  // 最大値の設定（2^160-1）
+  // ─── 7) Create permission data ───
+  // Set maximum value (2^160-1)
   const MAX_UINT160 = 2n ** 160n - 1n;
-  // permit2のdetailsデータを作成
+  // Create permit2 details data
   const permit = {
     details: [
       {
@@ -176,9 +174,7 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
     sigDeadline: deadline.toString(),
   };
 
-  // ─── 8) EIP-712署名の作成 ───
-
-  // 3-2) EIP‑712 署名
+  // ─── 8) Create EIP-712 signature ───
   const signature = await walletClient.signTypedData({
     account,
     domain: PERMIT2_DOMAIN(chainId),
@@ -187,15 +183,14 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
     message: permit,
   });
 
-  // ─── 9) トランザクション作成 ───
-
+  // ─── 9) Create transaction ───
   logger.info(`Calculating add liquidity parameters...`);
-  // バッチPermitを含まない基本的な流動性追加パラメータを取得
+  // Get basic liquidity addition parameters without batch Permit
   const { calldata: liqCalldata, value: rawLiqValue } = V4PositionManager.addCallParameters(pos, {
     slippageTolerance: slippagePct,
     recipient: owner as Address,
     deadline: deadline.toString(),
-    // 個別にパーミットを処理するために取り除く
+    // Remove to process permits individually
     batchPermit: {
       owner: owner as Address,
       permitBatch: permit,
@@ -203,15 +198,14 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
     },
   });
 
-  // valueの処理
+  // Process value
   const liqValue = Array.isArray(rawLiqValue) ? rawLiqValue[0] : rawLiqValue;
   logger.info(`Liquidity value: ${liqValue}`);
 
-  // ─── 10) トランザクション送信 ───
-
+  // ─── 10) Send transaction ───
   const calls = [liqCalldata];
 
-  // ガスリミットを明示的に増加させる
+  // Explicitly increase gas limit
   const txHash = await walletClient.writeContract({
     account,
     address: CONTRACTS.POSITION_MANAGER as Address,
@@ -228,20 +222,18 @@ export async function createPosition(params: CreatePositionParams): Promise<Crea
   if (receipt.status === 'success') {
     logger.info(`Transaction confirmed: ${receipt.transactionHash}`);
 
-    // ─── 11) ポジション取得 & 結果返却 ───
-    const ids = await getV4Positions(BOT_ADDRESS);
-    const latest = ids.at(-1);
-    if (!latest) {
-      throw new Error('No position returned');
-    }
-    const info = await getPositionInfo(latest.tokenId);
+    // ─── 11) Get position & return result ───
+    const latest = receipt.logs[2].topics[3] as string;
+    logger.info(`Latest position: ${latest}`);
+    const info = await getPositionInfo(BigInt(latest));
+
     if (!info) {
       throw new Error('Position info not found');
     }
 
     return {
       success: true,
-      tokenId: latest.tokenId,
+      tokenId: info.tokenId,
       liquidity: info.liquidity.toString(),
       amount0Used: info.token0BalanceFormatted,
       amount1Used: info.token1BalanceFormatted,

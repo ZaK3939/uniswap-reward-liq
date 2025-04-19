@@ -5,8 +5,8 @@ import 'dotenv/config';
 import { TypedDataDomain } from 'viem';
 import { Address, privateKeyToAddress } from 'viem/accounts';
 
-export const MONITORING_INTERVAL_MINUTES = 5;
-export const OUT_OF_RANGE_THRESHOLD = 3;
+export const MONITORING_INTERVAL_MINUTES = 2;
+export const OUT_OF_RANGE_THRESHOLD = 5;
 export const BALANCE_RATIO = 0.3; // Ratio of available balance to use for creating positions
 
 export enum SwapType {
