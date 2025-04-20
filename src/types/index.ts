@@ -2,8 +2,8 @@
  * Type definitions for Uniswap v4 Unichain integration
  */
 import { Token, Percent, BigintIsh } from '@uniswap/sdk-core';
-import { GRAPH_POSITIONS_RESPONSE } from '../config/query';
 import { Address } from 'viem';
+import JSBI from 'jsbi';
 
 /**
  * Position details interface
@@ -26,6 +26,7 @@ export interface DetailPositionInfo extends PositionDetails {
   hooks: Address;
   priceLower: number;
   priceUpper: number;
+  sqrtPriceX96: JSBI;
   currentPrice: number;
   currentTick: number;
   inRange: boolean;

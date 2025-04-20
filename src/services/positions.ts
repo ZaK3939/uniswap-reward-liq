@@ -129,6 +129,7 @@ export async function getPositionInfo(tokenId: bigint): Promise<DetailPositionIn
     ...details,
     priceLower,
     priceUpper,
+    sqrtPriceX96: pool.sqrtRatioX96,
     currentPrice,
     currentTick: poolData.tick,
     inRange,

@@ -22,7 +22,7 @@ export async function getPoolData(
   const poolId = Pool.getPoolId(currency0, currency1, fee, tickSpacing, hooksAddress);
   const poolIdBytes = `0x${poolId.slice(2).padStart(64, '0')}` as Address;
 
-  logger.info(`Pool ID: ${poolId}: Pool ID Bytes: ${poolIdBytes}: stateView: ${CONTRACTS.STATE_VIEW}`);
+  logger.info(`Pool ID: ${poolId}, checking stateView: ${CONTRACTS.STATE_VIEW}`);
   // getSlot0 returns [sqrtPriceX96, tick, obsIndex, cardinality]
   const slot0 = (await client.readContract({
     address: CONTRACTS.STATE_VIEW,

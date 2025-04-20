@@ -104,14 +104,9 @@ function startMonitoring(TOKEN_PAIR: any) {
           if (!pos.inRange) {
             outOfRangeCount++;
             if (outOfRangeCount >= OUT_OF_RANGE_THRESHOLD) {
-              const nowSec = BigInt(Math.floor(Date.now() / 1000));
-              const deadline = nowSec + BigInt(DEADLINE_BUFFER_SECONDS);
+              const deadline = BigInt(Math.floor(Date.now() / 1000)) + BigInt(DEADLINE_BUFFER_SECONDS);
               logger.info(`Position ${currentPositionId} is out of range for ${outOfRangeCount} intervals`);
-              const result = await removePositionIfOutOfRange(
-                pos, // pos オブジェクトをそのまま渡す
-                TX_CONFIG.SLIPPAGE_TOLERANCE,
-                deadline,
-              );
+              const result = await removePositionIfOutOfRange(pos, TX_CONFIG.SLIPPAGE_TOLERANCE, deadline);
               logger.info(`Removed tokenId=${result.tokenId}, txHash=${result.txHash}`);
               currentPositionId = undefined;
               outOfRangeCount = 0;
@@ -147,7 +142,7 @@ async function main() {
   try {
     // Load existing positions
     const { totalPositions, positions } = await analyzeAllPositions(BOT_ADDRESS);
-    logger.info(`Found ${totalPositions} existing active positions`);
+    logger.info(`======Found ${totalPositions} existing active positions======`);
 
     const match = positions.find(
       ({ token0, token1 }) =>

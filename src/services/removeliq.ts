@@ -7,7 +7,7 @@ import { CONTRACTS } from '../config/config';
 import { unichain } from '../config/chains';
 import logger from '../utils/logger';
 import { Percent } from '@uniswap/sdk-core';
-
+import JSBI from 'jsbi';
 /**
  * Removes a position if it has gone out of range.
  * @param pos         Full position info object
@@ -16,6 +16,7 @@ import { Percent } from '@uniswap/sdk-core';
  */
 export async function removePositionIfOutOfRange(pos: DetailPositionInfo, slippageTolerance: number, deadline: bigint) {
   // Reconstruct the Pool instance at current state
+  logger.info(`Removing position ${pos.tokenId} iquidity)`);
   const walletClient = getWalletClient();
   const publicClient = getPublicClient();
   const account = getWalletAccount();
@@ -27,19 +28,20 @@ export async function removePositionIfOutOfRange(pos: DetailPositionInfo, slippa
     pos.fee,
     pos.tickSpacing,
     pos.hooks,
-    pos.currentPrice,
+    pos.sqrtPriceX96,
     0, // liquidity not needed for reading
     pos.currentTick,
   );
-
+  logger.info(`Pool: ${pool.token0.symbol}/${pool.token1.symbol} (${pool.fee}bps)`);
   // Create a Position object for encoding the remove call
+
   const position = new Position({
     pool,
-    liquidity: pos.liquidity,
+    liquidity: JSBI.BigInt(pos.liquidity.toString()),
     tickLower: pos.tickLower,
     tickUpper: pos.tickUpper,
   });
-
+  logger.info(`Removing position ${pos.tokenId} (${pos.liquidity.toString()} liquidity)`);
   const slippagePct = new Percent(Math.floor(slippageTolerance * 100), 10_000);
   const removeOpts: RemoveLiquidityOptions = {
     // CommonOptions
@@ -53,8 +55,9 @@ export async function removePositionIfOutOfRange(pos: DetailPositionInfo, slippa
     // permit: …                               // only if needed
   };
   // Build calldata and required value for remove + collect
+  logger.info(`position: ${JSON.stringify(position)}`);
   const { calldata, value } = V4PositionManager.removeCallParameters(position, removeOpts);
-
+  logger.info(`Remove calldata: ${calldata}`);
   // Send transaction to PositionManager contract
   const txHash = await walletClient.writeContract({
     account,
@@ -62,7 +65,7 @@ export async function removePositionIfOutOfRange(pos: DetailPositionInfo, slippa
     chain: unichain,
     abi: POSITION_MANAGER_ABI,
     functionName: 'multicall',
-    args: [calldata],
+    args: [[calldata]],
     value: BigInt(value.toString()),
   });
   logger.info(`Transaction sent: ${txHash}`);
