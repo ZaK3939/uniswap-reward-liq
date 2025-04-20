@@ -37,7 +37,7 @@ PRIVATE_KEY=your_private_key_here
 # The Graph API key (if needed)
 GRAPH_KEY=your_api_key
 
-# Optional: Percentage of balance to use (defaults to 50%)
+# Optional: Percentage of balance to use (defaults to 5%)
 ```
 
 ## Config Param

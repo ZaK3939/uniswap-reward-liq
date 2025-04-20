@@ -8,6 +8,7 @@ import { Address, privateKeyToAddress } from 'viem/accounts';
 export const MONITORING_INTERVAL_MINUTES = 2;
 export const OUT_OF_RANGE_THRESHOLD = 5;
 export const BALANCE_RATIO = 5n; // 5% Ratio of available balance to use for creating positions
+export const DEADLINE_BUFFER_SECONDS = 300;
 
 export enum SwapType {
   UNIVERSAL_ROUTER = 'UNIVERSAL_ROUTER',

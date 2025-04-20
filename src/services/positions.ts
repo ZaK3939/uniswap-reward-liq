@@ -60,12 +60,6 @@ export async function getPositionDetails(tokenId: bigint): Promise<{
   ];
 
   const [poolKey, infoValue] = raw;
-  logger.info(
-    `getPoolAndPositionInfo: ${JSON.stringify({
-      poolKey,
-      // info: infoValue.toString(),
-    })}`,
-  );
 
   // Decode packed info
   const decoded = fromPositionInfoValue(infoValue);
@@ -136,6 +130,7 @@ export async function getPositionInfo(tokenId: bigint): Promise<DetailPositionIn
     priceLower,
     priceUpper,
     currentPrice,
+    currentTick: poolData.tick,
     inRange,
     percentOfPool,
     token0Symbol: token0.symbol,

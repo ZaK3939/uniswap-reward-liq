@@ -2,12 +2,19 @@ import 'dotenv/config';
 import logger from './utils/logger';
 import { analyzeAllPositions, getPositionInfo } from './services/positions';
 import { TOKEN_PAIRS } from './config/tokens';
-import { BOT_ADDRESS, MONITORING_INTERVAL_MINUTES, OUT_OF_RANGE_THRESHOLD, TX_CONFIG } from './config/config';
+import {
+  BOT_ADDRESS,
+  DEADLINE_BUFFER_SECONDS,
+  MONITORING_INTERVAL_MINUTES,
+  OUT_OF_RANGE_THRESHOLD,
+  TX_CONFIG,
+} from './config/config';
 
 import { CronJob } from 'cron';
 import { createPosition } from './services/createliq';
 import { CreatePositionParams } from './types';
 import { computeCounterpartyAmounts } from './utils/calcAmountForliquidity';
+import { removePositionIfOutOfRange } from './services/removeliq';
 
 // Constants
 // const TOKEN_PAIR = TOKEN_PAIRS.USDC_USDT;
@@ -91,13 +98,23 @@ function startMonitoring(TOKEN_PAIR: any) {
               6,
             )}, current ${pos.currentPrice.toFixed(6)}, inRange=${
               pos.inRange
-            }, percentOfPool=${pos.percentOfPool.toFixed(4)}%`,
+            }, percentOfPool=${pos.percentOfPool.toFixed(8)}%`,
           );
 
           if (!pos.inRange) {
             outOfRangeCount++;
             if (outOfRangeCount >= OUT_OF_RANGE_THRESHOLD) {
+              const nowSec = BigInt(Math.floor(Date.now() / 1000));
+              const deadline = nowSec + BigInt(DEADLINE_BUFFER_SECONDS);
               logger.info(`Position ${currentPositionId} is out of range for ${outOfRangeCount} intervals`);
+              const result = await removePositionIfOutOfRange(
+                pos, // pos オブジェクトをそのまま渡す
+                TX_CONFIG.SLIPPAGE_TOLERANCE,
+                deadline,
+              );
+              logger.info(`Removed tokenId=${result.tokenId}, txHash=${result.txHash}`);
+              currentPositionId = undefined;
+              outOfRangeCount = 0;
             }
           } else {
             outOfRangeCount = 0;

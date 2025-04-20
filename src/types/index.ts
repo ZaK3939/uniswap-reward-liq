@@ -22,9 +22,12 @@ export interface PositionDetails {
  * Extended position details with additional analysis
  */
 export interface DetailPositionInfo extends PositionDetails {
+  tickSpacing: number;
+  hooks: Address;
   priceLower: number;
   priceUpper: number;
   currentPrice: number;
+  currentTick: number;
   inRange: boolean;
   percentOfPool: number;
   token0Symbol?: string;

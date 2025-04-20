@@ -43,7 +43,6 @@ const tokenCache = new Map<string, Token>();
  * @returns Token object
  */
 export function getTokenByAddress(address: string): Token {
-  logger.info(`getTokenByAddress: ${address}`);
   // Handle native ETH (zero address)
   if (address === zeroAddress) {
     return new Token(UNICHAIN_CHAIN_ID, zeroAddress as `0x${string}`, 18, 'ETH', 'Ether');
@@ -92,8 +91,8 @@ export const TOKEN_PAIRS = {
     tokenA: zeroAddress,
     tokenB: TOKEN_ADDRESSES.USDT,
     name: 'ETH/USDT',
-    feeTier: 3000,
-    tickSpacing: 60,
+    feeTier: 500,
+    tickSpacing: 10,
   },
   USDC_USDT: {
     tokenA: TOKEN_ADDRESSES.USDC,
