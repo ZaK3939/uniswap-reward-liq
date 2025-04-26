@@ -25,13 +25,7 @@ export function tickToPrice(tick: number): number {
   return Math.pow(TICK_TO_PRICE_FACTOR, tick);
 }
 
-/**
- * Adjust raw tick to be a multiple of the tick spacing
- * @param tick raw tick
- * @param tickSpacing tick spacing of the pool
- * @returns tick adjusted to be a multiple of tickSpacing
- */
-export function nearestUsableTick(tick: number, tickSpacing: number) {
+export function nearestUsableTick(tick: number, tickSpacing: number, rangeWidth: number = 1) {
   // Calculate the nearest multiples of tick spacing
   // Lower bound: largest multiple of tickSpacing less than or equal to current tick
   const lowerTick = Math.floor(tick / tickSpacing) * tickSpacing;
@@ -42,10 +36,22 @@ export function nearestUsableTick(tick: number, tickSpacing: number) {
   if (upperTick <= lowerTick) {
     upperTick = lowerTick + tickSpacing;
   }
-  return {
-    tickLower: lowerTick,
-    tickUpper: upperTick,
-  };
+
+  if (rangeWidth === 1) {
+    // デフォルト動作
+    return {
+      tickLower: lowerTick,
+      tickUpper: upperTick,
+    };
+  } else {
+    // tickSpacingの倍数を単純に追加
+    const extraTicks = rangeWidth - 1;
+
+    return {
+      tickLower: lowerTick - extraTicks * tickSpacing,
+      tickUpper: upperTick + extraTicks * tickSpacing,
+    };
+  }
 }
 
 /**

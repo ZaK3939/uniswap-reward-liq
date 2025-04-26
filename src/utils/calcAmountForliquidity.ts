@@ -6,7 +6,7 @@ import logger from './logger';
 import { TickMath } from './tick/tickMath';
 import { nearestUsableTick } from './tick/calculateTicks';
 import { PoolData } from '../types';
-import { BALANCE_RATIO } from '../config/config';
+import { BALANCE_RATIO, TICK_RANGE } from '../config/config';
 
 /**
  * Given a wallet and token pair, determines which token balance is lower (in value) and
@@ -34,7 +34,7 @@ export async function computeCounterpartyAmounts(
   const poolData = await getPoolData(token0, token1, fee, tickSpacing);
   const sqrtRatioCurrentX96 = poolData.sqrtPriceX96;
 
-  const { tickLower, tickUpper } = nearestUsableTick(poolData.tick, tickSpacing);
+  const { tickLower, tickUpper } = nearestUsableTick(poolData.tick, tickSpacing, TICK_RANGE);
   logger.info(
     `Pool: ${token0.symbol}/${token1.symbol} @ fee=${fee / 10000}% tickLower=${tickLower} tickUpper=${tickUpper}`,
   );

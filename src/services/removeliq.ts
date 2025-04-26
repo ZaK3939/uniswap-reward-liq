@@ -57,7 +57,7 @@ export async function removePositionIfOutOfRange(pos: DetailPositionInfo, slippa
   // Build calldata and required value for remove + collect
   logger.info(`position: ${JSON.stringify(position)}`);
   const { calldata, value } = V4PositionManager.removeCallParameters(position, removeOpts);
-  logger.info(`Remove calldata: ${calldata}`);
+
   // Send transaction to PositionManager contract
   const txHash = await walletClient.writeContract({
     account,
