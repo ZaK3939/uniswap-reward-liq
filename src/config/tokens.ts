@@ -3,8 +3,7 @@
  */
 import { Token } from '@uniswap/sdk-core';
 import { UNICHAIN_CHAIN_ID } from './config';
-import ethAddress, { Address, zeroAddress } from 'viem';
-import logger from '../utils/logger';
+import { Address, zeroAddress } from 'viem';
 
 // Token addresses - replace with actual addresses on Unichain
 export const TOKEN_ADDRESSES = {
@@ -93,6 +92,7 @@ export const TOKEN_PAIRS = {
     name: 'ETH/USDT',
     feeTier: 500,
     tickSpacing: 10,
+    hooks: zeroAddress,
   },
   USDC_USDT: {
     tokenA: TOKEN_ADDRESSES.USDC,
@@ -100,6 +100,7 @@ export const TOKEN_PAIRS = {
     name: 'USDC/USDT',
     feeTier: 100,
     tickSpacing: 1,
+    hooks: zeroAddress,
   },
   // Add more pairs as needed
 } as const;

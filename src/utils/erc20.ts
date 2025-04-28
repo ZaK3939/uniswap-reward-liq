@@ -3,6 +3,7 @@ import { getPublicClient, getAccountAddress } from './client';
 import logger from './logger';
 import { ERC20_ABI } from '../abis';
 import { isNative } from '../config/tokens';
+import { TokenBalance } from '../types';
 
 /**
  * Get balances for multiple ERC20 tokens
@@ -10,19 +11,7 @@ import { isNative } from '../config/tokens';
  * @param tokenAddresses Array of token contract addresses
  * @returns Promise with token balance information
  */
-export async function getMultipleTokenBalances(
-  address: Address,
-  tokenAddresses: Address[],
-): Promise<
-  {
-    tokenAddress: Address;
-    symbol: string;
-    balanceWei: bigint;
-    balanceFormatted: number;
-    decimals: number;
-    error?: string;
-  }[]
-> {
+export async function getMultipleTokenBalances(address: Address, tokenAddresses: Address[]): Promise<TokenBalance[]> {
   const client = getPublicClient();
 
   const balances = await Promise.all(
@@ -31,7 +20,8 @@ export async function getMultipleTokenBalances(
         let balanceWei: bigint;
         let decimals: number;
         let symbol: string;
-
+        // Check if the token address is native (ETH)
+        // or an ERC20 token
         if (isNative(tokenAddress)) {
           // Native ETH balance
           balanceWei = await client.getBalance({ address });
@@ -61,7 +51,6 @@ export async function getMultipleTokenBalances(
         }
 
         const balanceFormatted = Number(formatUnits(balanceWei, decimals));
-
         return {
           tokenAddress,
           symbol,

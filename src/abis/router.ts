@@ -2,7 +2,9 @@
  * ABIs for Uniswap Universal Router
  */
 
-export const UNIVERSAL_ROUTER_ABI = [
+import { Abi } from 'viem';
+
+export const UNIVERSAL_ROUTER_ABI: Abi = [
   {
     inputs: [
       {

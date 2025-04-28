@@ -5,14 +5,12 @@ import 'dotenv/config';
 import { TypedDataDomain } from 'viem';
 import { Address, privateKeyToAddress } from 'viem/accounts';
 
-export const MONITORING_INTERVAL_MINUTES = 2;
-export const OUT_OF_RANGE_THRESHOLD = 15;
+export const MONITORING_INTERVAL_MINUTES = 6;
+export const OUT_OF_RANGE_THRESHOLD = 10;
 export const BALANCE_RATIO = 40n; // 40% Ratio of available balance to use for creating positions
 export const DEADLINE_BUFFER_SECONDS = 300;
+export const REBALANCE_THRESHOLD = 0.1; // 10% threshold for rebalancing
 export const TICK_RANGE = 5; //1: only one tick, 2: 1 + 1 both side
-export enum SwapType {
-  UNIVERSAL_ROUTER = 'UNIVERSAL_ROUTER',
-}
 
 export const MAX_UINT160 = 2n ** 160n - 1n;
 // Network configuration

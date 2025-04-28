@@ -1,5 +1,5 @@
 import { Ether, Percent } from '@uniswap/sdk-core';
-import { tickToPrice, Pool, Position, V4PositionManager, AddLiquidityOptions, MintOptions } from '@uniswap/v4-sdk';
+import { tickToPrice, Pool, Position, V4PositionManager, MintOptions } from '@uniswap/v4-sdk';
 import type { Address } from 'viem';
 import { formatUnits, parseUnits, zeroAddress } from 'viem';
 import { getPublicClient, getWalletAccount, getWalletClient } from '../utils/client';
@@ -34,20 +34,20 @@ async function buildPermitDetails(
     nonce: string;
   }[] = [];
   const publicClient = getPublicClient();
-  for (const { address, decimals } of tokens) {
+  for (const { address } of tokens) {
     if (isNative(address)) {
       logger.info(`Native ETH – skipping Permit2 details: ${address}`);
       continue;
     }
 
     // Read [amount, expiration, nonce] from Permit2 contract
-    const [, , nonce] = await publicClient.readContract({
+    const [, , nonce] = (await publicClient.readContract({
       account: getWalletAccount(),
       address: CONTRACTS.PERMIT2,
       abi: PERMIT2_ABI,
       functionName: 'allowance',
       args: [owner, address, CONTRACTS.POSITION_MANAGER],
-    });
+    })) as [bigint, bigint, bigint];
 
     details.push({
       token: address,
@@ -60,7 +60,7 @@ async function buildPermitDetails(
   return details;
 }
 
-async function signPermit2Payload(payload: {
+export async function signPermit2Payload(payload: {
   details: {
     token: Address;
     amount: string;

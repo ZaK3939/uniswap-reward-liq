@@ -54,8 +54,8 @@ export async function getPoolData(
   );
 
   return {
-    token0,
-    token1,
+    token0: currency0,
+    token1: currency1,
     fee: pool.fee,
     poolId,
     hooks: pool.hooks as Address,

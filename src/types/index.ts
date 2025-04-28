@@ -4,6 +4,7 @@
 import { Token, Percent, BigintIsh } from '@uniswap/sdk-core';
 import { Address } from 'viem';
 import JSBI from 'jsbi';
+import { PoolKey } from '@uniswap/v4-sdk';
 
 /**
  * Position details interface
@@ -71,14 +72,12 @@ export interface CreatePositionResult {
  * Swap parameters
  */
 export interface SwapParams {
-  tokenIn: string;
-  tokenOut: string;
-  fee: number;
+  poolKey: PoolKey;
+  tokenIn: Address;
+  tokenOut: Address;
   amountIn: string;
-  amountOutMinimum?: string;
-  slippageTolerance?: number;
-  recipient?: string;
-  deadline?: number;
+  slippageTolerance: number;
+  deadline: bigint;
 }
 
 /**
@@ -91,6 +90,16 @@ export interface SwapResult {
   transactionHash?: string;
   effectivePrice?: string;
   priceImpact?: string;
+  error?: string;
+}
+
+// Token balance with complete information
+export interface TokenBalance {
+  tokenAddress: `0x${string}`;
+  symbol: string;
+  balanceWei: bigint;
+  balanceFormatted: number;
+  decimals: number;
   error?: string;
 }
 
