@@ -62,7 +62,7 @@ async function mintV4Position(
     // Option parsing
     const slippageTolerance = options?.slippageTolerance ?? 0.5; // Default 0.5%
     const deadlineSeconds = options?.deadline ?? 30 * 60; // Default 30 minutes
-    const usePermit2 = options?.usePermit2 ?? false;
+    const usePermit2 = options?.usePermit2 ?? true;
 
     // 2. Create Currency objects from token info (modified part)
     let tokenA: Currency;
@@ -87,7 +87,12 @@ async function mintV4Position(
 
     // Simple string comparison for sorting
     const token0IsA = addressA.toLowerCase() < addressB.toLowerCase();
-    const token0 = token0IsA ? tokenA : tokenB;
+    const /* `token0` is being determined based on the comparison of the addresses of `tokenA` and
+    `tokenB`. If the address of `tokenA` is considered lower than the address of `tokenB`,
+    then `token0` is set to `tokenA`; otherwise, it is set to `tokenB`. This comparison helps
+    in establishing the order of tokens within the Uniswap pool for further processing in the
+    minting of a V4 position. */
+      token0 = token0IsA ? tokenA : tokenB;
     const token1 = token0IsA ? tokenB : tokenA;
 
     console.log(`Token ordering (simplified): 
