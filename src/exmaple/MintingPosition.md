@@ -1,4 +1,4 @@
-# Uniswap v4 Liquidity Position Minting (V4 SDK & Interface Guide)
+# Uniswap v4 Liquidity Position Minting (V4 SDK Guide)
 
 ## Overview of Uniswap v4 Position Minting
 
