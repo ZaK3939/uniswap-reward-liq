@@ -8,11 +8,24 @@ async function examples() {
   try {
     // // Example: Create a WETH-USDT position with full range
     // console.log('Creating a WETH-USDT position with full range...');
+    const result = await createLiquidityPosition(
+      'NATIVE',
+      TOKEN_ADDRESSES.USDT,
+      0.002, // 0.2 WETH
+      4, // 4 USDT
+      500, // 0.05% fee tier
+      false, // full range
+      10, // 10% range
+      {
+        slippageTolerance: 0.5, // 0.5% slippage tolerance
+        usePermit2: true,
+      },
+    );
     // const result = await createLiquidityPosition(
     //   'NATIVE',
-    //   TOKEN_ADDRESSES.USDT,
-    //   0.002, // 0.25 WETH
-    //   4, // 450 USDT
+    //   TOKEN_ADDRESSES.USDC,
+    //   0.002, // 0.002 WETH
+    //   4, // 4 USDC
     //   500, // 0.05% fee tier
     //   true, // full range
     //   0, // full range (0 ticks)
@@ -21,19 +34,6 @@ async function examples() {
     //     usePermit2: true,
     //   },
     // );
-    const result = await createLiquidityPosition(
-      'NATIVE',
-      TOKEN_ADDRESSES.USDC,
-      0.002, // 0.002 WETH
-      4, // 4 USDC
-      500, // 0.05% fee tier
-      true, // full range
-      0, // full range (0 ticks)
-      {
-        slippageTolerance: 0.5, // 0.5% slippage tolerance
-        usePermit2: true,
-      },
-    );
     console.log('Position created:', result);
   } catch (error) {
     console.error('Error in examples:', error);

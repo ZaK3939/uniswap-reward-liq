@@ -4,23 +4,24 @@
 
 Uniswap v4 introduces a new PositionManager contract and a corresponding V4 SDK to manage liquidity positions. Like v3, liquidity positions are represented as NFTs, but v4 uses a command-based interface for bundling actions (e.g., minting liquidity and transferring tokens) into a single transaction.
 
-The V4 SDK provides high-level classes – Pool, Position, and V4PositionManager – to help construct these transactions in JavaScript/TypeScript. This guide explains how to create (mint) a new liquidity position using the Uniswap v4 SDK and how the Uniswap Interface leverages these tools (with Permit2 signatures and multicall) in combination with viem for a seamless user experience. We will cover:
+The V4 SDK provides high-level classes – Pool, Position, and V4PositionManager – to help construct these transactions in JavaScript/TypeScript. This guide explains how to create (mint) a new liquidity position using the Uniswap v4 SDK.
+
+We will cover:
 
 - Setting up a Pool and Position for minting
 - Configuring MintOptions (all parameters, types, and defaults)
 - Using V4PositionManager.addCallParameters to get transaction data
-- How Uniswap Interface handles position creation (Permit2 for approvals, multicall, viem integration)
-- Sample code with explanations and improvements for clarity
 
 ## Preparing Pool and Position Objects
 
 Before minting, you need a Pool instance reflecting the current on-chain state and a Position defining your desired liquidity parameters:
 
-### Instantiate Pool
+### Step 1: Define Token Information
 
-Create a Pool object from the Uniswap v4 SDK using the fetched data. The Pool constructor in v4 is similar to v3 (just make sure to use Currency/Token classes from the v4 SDK for the two assets, and include any hook address if applicable):
+First, create type definitions and define token information:
 
 ```typescript
+// Define the structure of token information
 interface TokenInfo {
   /** Chain ID */
   chainId: number;
@@ -34,28 +35,43 @@ interface TokenInfo {
   isNative: boolean;
 }
 
+// Example token information
 const TOKEN_INFO = {
-  [TOKEN_ADDRESSES.USDC]: {
-    symbol: 'USDC',
-    name: 'USD Coin',
-    decimals: 6,
+  [USDC_ADDRESS]: {
     chainId,
+    decimals: 6,
+    address: USDC_ADDRESS,
+    symbol: 'USDC',
     isNative: false,
   },
   // Native ETH
   NATIVE: {
-    symbol: 'ETH',
-    name: 'Ether',
-    decimals: 18,
     chainId,
+    decimals: 18,
+    address: zeroAddress, // Ethereum's zero address for native token
+    symbol: 'ETH',
     isNative: true,
-    address: zeroAddress,
   },
 } as const;
 
+// Assuming tokenAInfo and tokenBInfo are selected by the user
+// For example: const tokenAInfo = TOKEN_INFO.NATIVE;
+// For example: const tokenBInfo = TOKEN_INFO[USDC_ADDRESS];
+```
+
+### Step 2: Instantiate Currency/Token Objects
+
+Convert token information into SDK Currency/Token objects:
+
+```typescript
+import { Ether, Token, Currency } from '@uniswap/v4-sdk';
+import { zeroAddress } from 'viem';
+
+// Initialize Currency objects based on token info
 let tokenA: Currency;
 let tokenB: Currency;
 
+// Convert token info to SDK Currency objects
 if (tokenAInfo.isNative) {
   tokenA = Ether.onChain(chainId);
 } else {
@@ -69,6 +85,7 @@ if (tokenBInfo.isNative) {
 }
 
 // Simply sort by address to determine token0 and token1
+// Important: Uniswap requires tokens to be ordered by address
 const addressA = tokenAInfo.isNative ? zeroAddress : tokenAInfo.address;
 const addressB = tokenBInfo.isNative ? zeroAddress : tokenBInfo.address;
 
@@ -80,20 +97,36 @@ const token1 = token0IsA ? tokenB : tokenA;
 
 > **Note**: In v4, pools are identified by a PoolKey (which includes token0, token1, fee, tick spacing, and hook address). The SDK's Pool class helps manage these details. Ensure that the token order (token0 vs token1) and the hook address match the actual pool.
 
-### Fetch Pool State
+### Step 3: Fetch Pool State
 
-Using either on-chain calls or the Uniswap StateView contract, retrieve the pool's current state (current sqrt price, current tick, liquidity, etc.). In code, you might use viem or ethers to call the pool manager or StateView contract for slot0, liquidity, etc. For example (using viem):
+Before creating a Pool instance, you need to fetch the current state from the blockchain:
 
 ```typescript
 import { createPublicClient, http } from 'viem';
-import { mainnet } from 'viem/chains';
 import { Pool } from '@uniswap/v4-sdk';
-import { STATE_VIEW_ABI } from '../abis';
 
-const client = createPublicClient({ chain: mainnet, transport: http() });
+// Define constants for the function
+// The STATE_VIEW_ADDRESS should be imported from your constants file
+// or defined at the top of your file
+const STATE_VIEW_ADDRESS = '0x86e8631a016f9068c3f085faf484ee3f5fdee8f2'; // Replace with actual StateView contract address
+const STATE_VIEW_ABI = [...]; // Import or define the ABI for StateView contract
+const CHAIN_ID = xxx; // Replace Chain id
 
+// Create a viem client for reading blockchain data
+const client = createPublicClient({
+  chain: CHAIN_ID,
+  transport: http()
+});
+
+// Define pool parameters
+const fee = 500; // Fee tier (e.g., 500 = 0.05%)
+const tickSpacing = 10; // Tick spacing for this fee tier
+const hookAddress = '0x0000...'; // Hook address, if any (or zero address)
+
+// Get the pool ID using SDK helper
 const poolId = Pool.getPoolId(token0, token1, fee, tickSpacing, hookAddress);
-// Assuming poolId is known and STATE_VIEW_ABI includes getSlot0 and getLiquidity
+
+// Fetch current pool state from the blockchain
 const [slot0, liquidity] = await Promise.all([
   client.readContract({
     address: STATE_VIEW_ADDRESS,
@@ -102,7 +135,7 @@ const [slot0, liquidity] = await Promise.all([
     args: [poolId as `0x${string}`],
   }),
   client.readContract({
-    address: .STATE_VIEW_ADDRESS,
+    address: STATE_VIEW_ADDRESS, // Corrected the typo
     abi: STATE_VIEW_ABI,
     functionName: 'getLiquidity',
     args: [poolId as `0x${string}`],
@@ -114,111 +147,196 @@ const sqrtPriceX96Current = slot0[0] as bigint;
 const currentTick = slot0[1] as number;
 const currentLiquidity = liquidity as bigint;
 
-// Create Pool instance
+// Create Pool instance with the fetched data
 const pool = new Pool(
   token0,
   token1,
   fee,
   tickSpacing,
-  hooks,
-  sqrtPriceX96.toString(),
-  liquidity.toString(),
-  tick,
+  hookAddress, // Pass the hook address from above
+  sqrtPriceX96Current.toString(), // Convert bigint to string for SDK
+  currentLiquidity.toString(), // Convert bigint to string for SDK
+  currentTick, // Current tick from slot0
 );
 ```
 
-### Define Position Parameters
+### Step 4: Define Position Parameters
 
-Decide your position's tick range and liquidity or token amounts. For example, you might choose a range around the current price and an amount of token0 and token1 to deposit. Determine tickLower, tickUpper, and one of:
-
-- desired amount0 and amount1, or
-- a specific liquidity amount.
-
-### Create a Position
-
-Use the Position class to represent the liquidity position. The v4 SDK offers static methods similar to v3 (e.g., Position.fromAmounts, Position.fromAmount0, Position.fromAmount1) to compute the maximum liquidity for given token amounts, or you can directly provide a liquidity value. For example, to create a Position from known token amounts:
+Now define the parameters for your liquidity position:
 
 ```typescript
+// https://github.com/Uniswap/v3-sdk/blob/main/src/utils/nearestUsableTick.ts
+function nearestUsableTick(tick: number, tickSpacing: number) {
+  invariant(Number.isInteger(tick) && Number.isInteger(tickSpacing), 'INTEGERS');
+  invariant(tickSpacing > 0, 'TICK_SPACING');
+  invariant(tick >= TickMath.MIN_TICK && tick <= TickMath.MAX_TICK, 'TICK_BOUND');
+  const rounded = Math.round(tick / tickSpacing) * tickSpacing;
+  if (rounded < TickMath.MIN_TICK) return rounded + tickSpacing;
+  else if (rounded > TickMath.MAX_TICK) return rounded - tickSpacing;
+  else return rounded;
+}
+
+// Define position parameters
+// These typically come from user input in your interface
+const fullRange = false; // Whether to create a full-range position
+const tickRange = 5; // Percentage range around current price (e.g., 5%)
+const amountA = 1.0; // Amount of token A to deposit
+const amountB = 1000.0; // Amount of token B to deposit
+
+// Calculate tick boundaries based on user preferences
 let tickLower: number;
 let tickUpper: number;
 
 if (fullRange) {
-  // Uniswap's minimum and maximum allowed ticks (fixed)
+  // For full-range positions, use Uniswap's minimum and maximum allowed ticks
   const MIN_TICK = -887272;
   const MAX_TICK = 887272;
 
-  // Dynamically get tickSpacing based on feeTier
+  // Helper function to get tick spacing based on fee tier
+  // This function should be defined elsewhere or imported
+  const getTickSpacingFromFee = (fee: number): number => {
+    switch (fee) {
+      case 100:
+        return 1; // 0.01%
+      case 500:
+        return 10; // 0.05%
+      case 3000:
+        return 60; // 0.3%
+      case 10000:
+        return 200; // 1%
+      default:
+        return 60;
+    }
+  };
+
+  // Get tick spacing based on fee tier
   const tickSpacing = getTickSpacingFromFee(fee);
 
-  // Round tickLower up (closer to the upper direction)
-  tickLower = nearestUsableTick(MIN_TICK, tickSpacing, true);
+  // Round tickLower up (closer to the center)
+  // The nearestUsableTick ensures the tick is aligned with tick spacing
+  // Third parameter (true) means we round up for lower tick
+  tickLower = nearestUsableTick(MIN_TICK, tickSpacing);
 
-  // Round tickUpper down (closer to the lower direction)
-  tickUpper = nearestUsableTick(MAX_TICK, tickSpacing, false);
+  // Round tickUpper down (closer to the center)
+  // Third parameter (false) means we round down for upper tick
+  tickUpper = nearestUsableTick(MAX_TICK, tickSpacing);
 } else {
-  // Calculate based on percentage range around current tick
-  const currentTick = poolData.tick;
+  // For custom range, calculate based on percentage around current tick
+  // tickRange is the percentage range (e.g., 5%)
   const tickRangeAmount = Math.floor((tickRange / 100) * 10000); // Convert percentage to tick count
+
+  // Calculate lower and upper ticks, ensuring they align with tick spacing
   tickLower = Math.floor((currentTick - tickRangeAmount) / tickSpacing) * tickSpacing;
   tickUpper = Math.floor((currentTick + tickRangeAmount) / tickSpacing) * tickSpacing;
 }
 
+// Convert human-readable amounts to token amounts with proper decimals
 const amountADesired = BigInt(Math.floor(amountA * 10 ** tokenAInfo.decimals));
 const amountBDesired = BigInt(Math.floor(amountB * 10 ** tokenBInfo.decimals));
 
+// Ensure token amounts are in the correct order (token0, token1)
 const amount0Desired = token0IsA ? amountADesired.toString() : amountBDesired.toString();
 const amount1Desired = token0IsA ? amountBDesired.toString() : amountADesired.toString();
+```
 
+### Step 5: Create a Position
+
+Use the SDK to create a Position object that represents your liquidity position:
+
+```typescript
+import { Position } from '@uniswap/v4-sdk';
+
+// Create a position from the desired token amounts
+// The SDK will calculate the maximum liquidity possible with these amounts
 const position = Position.fromAmounts({
   pool,
   tickLower,
   tickUpper,
   amount0: amount0Desired,
   amount1: amount1Desired,
-  useFullPrecision: true,
+  useFullPrecision: true, // Use full precision for maximum accuracy
 });
+
+// You can now access useful information from the position:
+// position.mintAmounts - The actual amounts needed to mint this position
+// position.amount0 - The amount of token0 in the position
+// position.amount1 - The amount of token1 in the position
+// position.liquidity - The liquidity value of the position
+console.log('Position liquidity:', position.liquidity.toString());
+console.log('Token0 amount:', position.amount0.toExact());
+console.log('Token1 amount:', position.amount1.toExact());
 ```
 
-This calculates the maximum liquidity that can be minted given those amounts and the price range. Alternatively, if you have a specific liquidity amount, you could use `new Position({ pool, tickLower, tickUpper, liquidity })`. The Position object also provides the minimum required amounts via `position.mintAmounts` (amount0 and amount1 needed) and can adjust for slippage later.
+> **Alternative**: If you have a specific liquidity amount instead of token amounts, you could use:
+>
+> ```typescript
+> const position = new Position({
+>   pool,
+>   tickLower,
+>   tickUpper,
+>   liquidity: '1000000000000000000', // Example liquidity amount
+> });
+> ```
 
 ## Understanding MintOptions and Its Parameters
 
-Once the Position is defined, the next step is to prepare the MintOptions object. In Uniswap v4 SDK, MintOptions is a type alias that combines three sets of options: CommonOptions, CommonAddLiquidityOptions, and MintSpecificOptions. This structure covers generic transaction settings, options common to any "add liquidity" action, and options unique to minting a new position. Below is a breakdown of each parameter in MintOptions:
+Once the Position is defined, the next step is to prepare the MintOptions object. In Uniswap v4 SDK, MintOptions is a type alias that combines three sets of options: CommonOptions, CommonAddLiquidityOptions, and MintSpecificOptions. This structure covers generic transaction settings, options common to any "add liquidity" action, and options unique to minting a new position.
 
-- **slippageTolerance** (Percent, required): The maximum price slippage you allow for the pool price during the mint operation. This is used to calculate amount0Min and amount1Min – the minimum amounts of each token that must be accepted (if the price moves unfavorably beyond this tolerance, the transaction will revert). For example, `new Percent(50, 10000)` represents 0.5% tolerance.
+### MintOptions Parameters Explained
 
-- **deadline** (BigintIsh, required): The UNIX timestamp (in seconds) after which the transaction will expire. This protects against the transaction getting stuck pending for too long. You can use `Math.floor(Date.now()/1000) + X` seconds into the future.
+```typescript
+// Import necessary types
+import { Percent } from '@uniswap/sdk-core';
+import { MintOptions } from '@uniswap/v4-sdk';
 
-- **recipient** (string, required): The Ethereum address that will receive the minted position NFT. Typically this is the user's own address (e.g., from their wallet). The PositionManager will mint the ERC-721 NFT to this address.
+// Example code showing how to set up MintOptions
+// These parameters typically come from user input or application state
 
-- **hookData** (string, optional): Arbitrary data to pass to any pool hook on mint. If the pool uses custom hooks, you can supply data that the hook contract will use when the position is minted. For most pools (no special hook logic), this can be an empty string or omitted.
+// 1. slippageTolerance (required): Maximum allowed price movement
+// Convert from a percentage (e.g., 0.5%) to a Percent object
+// Here, 50 out of 10000 = 0.5%
+const slippageTolerance = 0.5; // 0.5% slippage tolerance
+const slippagePct = new Percent(Math.floor(slippageTolerance * 100), 10_000);
 
-- **useNative** (NativeCurrency, optional): This flag indicates if one of the tokens is the native currency (ETH, etc.) and should be sent directly as ETH instead of as an ERC20. If useNative is true, one of the pool's currencies must be the chain's native token (e.g., WETH for Ethereum). The SDK will then handle wrapping/unwrapping. For example, if your pair is WETH/USDC and you set `useNative: Native.onChain(1)` (for mainnet ETH), the call will accept ETH for the WETH portion. In practice, useNative ensures the value field in the transaction is set and a SWEEP action is added to refund excess ETH.
+// 2. deadline (required): Transaction expiry timestamp in seconds
+// Usually current time + some buffer (e.g., 20 minutes)
+const deadlineSeconds = 20 * 60; // 20 minutes
+const currentBlock = await publicClient.getBlock();
+const currentBlockTimestamp = Number(currentBlock.timestamp);
+const deadline = currentBlockTimestamp + deadlineSeconds;
 
-- **batchPermit** (BatchPermitOptions, optional): Supplies a Permit2 signature to allow the PositionManager to spend your tokens without prior ERC20 approval. Using Permit2 (Uniswap's universal permit contract) avoids needing separate approve() transactions. If provided, this should include:
+// 3. recipient (required): Address to receive the position NFT
+// Typically the user's wallet address
+const userAddress = '0xYourAddressHere'; // Replace with actual user address
 
-  - owner: your address (the token holder),
-  - permitBatch: an object describing the allowed tokens and amounts (of type AllowanceTransferPermitBatch),
-  - signature: the permit2 signature string (signed by the owner).
+// Create the basic MintOptions object with required fields
+const mintOptions: MintOptions = {
+  recipient: userAddress,
+  slippageTolerance: slippagePct,
+  deadline: deadline.toString(),
 
-  The SDK can help generate the permit data. For example, Position.permitBatchData() on your Position can produce the structured data hash to sign for Permit2. After signing off-chain, you include the signature and permit details here. If batchPermit is used, the resulting call data from addCallParameters will bundle the permit and mint in a single multicall so that token allowances are granted just-in-time.
+  // 4. useNative (optional): Use native ETH
+  useNative: tokenAInfo.isNative
+    ? Ether.onChain(tokenAInfo.chainId)
+    : tokenBInfo.isNative
+    ? Ether.onChain(tokenBInfo.chainId)
+    : undefined,
 
-- **createPool** (boolean, optional): If true, indicates that the pool should be created/initialized if it doesn't exist yet. Use this when adding liquidity to a brand new market. When `createPool: true`, you must also provide sqrtPriceX96 (initial price) as described below. The SDK will then include the pool initialization in the transaction. If the pool is already created and initialized, you should not set this (or set it to false).
+  // 5. batchPermit (optional): For gasless approvals via Permit2
+  // We'll set this later if needed
 
-- **sqrtPriceX96** (BigintIsh, optional): The initial sqrt price for the pool, in Q96 format, used only when creating a new pool. This represents the starting price ratio between the two tokens (token0/token1). You can compute this from a desired price (P) using the formula: `sqrtPriceX96 = floor(sqrt(P) * 2^96)`. The SDK expects this as a BigInt or similar. Only needed if createPool is true; it will be ignored otherwise.
+  // 6. hookData (optional): Data for pool hooks
+  // Only needed for pools with custom hooks
+  hookData: '0x', // Default empty bytes
 
-- **migrate** (boolean, optional): Indicates if this mint is part of a v3 to v4 migration process. In most standard use-cases, this will be false (or simply omitted). It's an option reserved for Uniswap's migration contracts/tools and can generally be left unset by developers not performing a migration. If true, the PositionManager might handle some internal accounting differently (e.g., skip certain checks), but if you're just adding new liquidity, you do not need to use this.
+  // 7-8. For new pools only:
+  // createPool: true, // Uncomment if creating a new pool
+  // sqrtPriceX96: '1234567890123456789', // Initial price, required if createPool is true
 
-### Default Behaviors
-
-All required fields (slippageTolerance, deadline, recipient) must be provided explicitly – there are no internal defaults for these. Optional fields can be omitted if not needed:
-
-- If batchPermit is not provided, it is assumed you have already approved the PositionManager to spend token0 and token1 (so ensure you call `ERC20.approve(positionManagerAddress, amount)` for each token beforehand, or the transaction will revert).
-- If useNative is false/omitted, the SDK will assume you are using the ERC20 representations for all tokens (e.g., using WETH directly rather than sending Ether).
-- If createPool is false/omitted, the pool must already exist and be initialized; otherwise the transaction will fail. (Pool creation can also be done via a separate `V4PositionManager.createCallParameters()` call if you prefer a two-step approach.)
-- If hookData is not set, an empty bytes value will be forwarded to the contract (which is fine for pools without hooks).
-
-Below is a summary table of MintOptions for quick reference:
+  // 9. For migrations only:
+  // migrate: false, // Normally omitted unless migrating from v3
+};
+```
 
 | Parameter         | Type               | Description                                                 | Required           |
 | ----------------- | ------------------ | ----------------------------------------------------------- | ------------------ |
@@ -232,64 +350,73 @@ Below is a summary table of MintOptions for quick reference:
 | sqrtPriceX96      | BigintIsh          | Initial price (sqrtP) for new pool (required if createPool) | No                 |
 | migrate           | boolean            | Mark as part of v3→v4 migration flow                        | No                 |
 
-## Using V4PositionManager to Generate Mint Transaction
+### Using Permit2 for Gasless Approvals (Optional)
 
-With a Position object and MintOptions prepared, the SDK can compute the calldata and value for the position mint. We use the static method `V4PositionManager.addCallParameters(position, options)` which returns a MethodParameters object containing the calldata and value (ETH to send). Example:
+The `batchPermit` option allows users to sign a message off-chain to grant token approval, avoiding separate approve transactions. Here's how to implement it:
 
 ```typescript
-import { Percent, Token, Ether, Currency } from '@uniswap/sdk-core';
-import { MintOptions, V4PositionManager } from '@uniswap/v4-sdk';
+// Constants and imports needed for Permit2
+import { getWalletAccount } from './your-wallet-helpers';
 
-// Assume `position` from earlier and userAddress is our recipient
-const slippagePct = new Percent(Math.floor(slippageTolerance * 100), 10_000);
-
-const currentBlock = await publicClient.getBlock();
-const currentBlockTimestamp = Number(currentBlock.timestamp);
-const deadline = currentBlockTimestamp + deadlineSeconds;
-
-const mintOptions: MintOptions = {
-  recipient: userAddress,
-  slippageTolerance: slippagePct,
-  deadline: deadline.toString(),
-  useNative: tokenAInfo.isNative
-    ? Ether.onChain(tokenAInfo.chainId)
-    : tokenBInfo.isNative
-    ? Ether.onChain(tokenBInfo.chainId)
-    : undefined, // not using native ETH in this example (both tokens are ERC20)
-  batchPermit: undefined, // assume tokens are already approved; otherwise supply permit here
-  // createPool and sqrtPriceX96 if needed:
-  // createPool: true,
-  // sqrtPriceX96: initialPrice,
+// Define necessary constants
+const CONTRACTS = {
+  PERMIT2: '0x000000000022D473030F116dDEE9F6B43aC78BA3', // Permit2 contract address
+  POSITION_MANAGER: '0x4529a01c7a0410167c5740c487a8de60232617bf.', // Position Manager address (unichain)
 };
 
+const PERMIT2_ABI = [...]; // Import or define Permit2 ABI
+const PERMIT2_TYPES = {
+  PermitBatch: [
+    { name: 'details', type: 'PermitDetails[]' },
+    { name: 'spender', type: 'address' },
+    { name: 'sigDeadline', type: 'uint256' }
+  ],
+  PermitDetails: [
+    { name: 'token', type: 'address' },
+    { name: 'amount', type: 'uint256' },
+    { name: 'expiration', type: 'uint256' },
+    { name: 'nonce', type: 'uint256' }
+  ]
+};
+
+// Check if we should use Permit2 (application setting or user preference)
+const usePermit2 = true; // This could be a user setting
+
 if (usePermit2) {
-  // Generate Permit2 only for ERC20 tokens
+  // Generate Permit2 data only for ERC20 tokens (not needed for native ETH)
   const permitDetails = [];
 
+  // Process tokenA if it's not native
   if (!tokenAInfo.isNative) {
+    // Get current nonce from Permit2 contract
     const [, , nonce] = (await publicClient.readContract({
-      account: getWalletAccount(),
-      address: CONTRACTS.PERMIT2,
+      account: getWalletAccount(), // Your function to get the current wallet
+      address: PERMIT2_ADDRESS,
       abi: PERMIT2_ABI,
       functionName: 'allowance',
-      args: [user.address, tokenAInfo.address, POSITION_MANAGER_ADDRESS],
+      args: [userAddress, tokenAInfo.address, POSITION_MANAGER_ADDRESS],
     })) as [bigint, bigint, bigint];
+
+    // Add permit details for this token
+    // Max uint160 value is used as the amount for an unlimited allowance
     permitDetails.push({
       token: tokenAInfo.address,
-      amount: (2n ** 160n - 1n).toString(),
+      amount: (2n ** 160n - 1n).toString(), // Max uint160
       expiration: deadline.toString(),
       nonce: nonce.toString(),
     });
   }
 
+  // Do the same for tokenB if it's not native
   if (!tokenBInfo.isNative) {
     const [, , nonce] = (await publicClient.readContract({
       account: getWalletAccount(),
-      address: CONTRACTS.PERMIT2,
+      address: PERMIT2_ADDRESS,
       abi: PERMIT2_ABI,
       functionName: 'allowance',
-      args: [user.address, tokenBInfo.address, POSITION_MANAGER_ADDRESS],
+      args: [userAddress, tokenBInfo.address, POSITION_MANAGER_ADDRESS],
     })) as [bigint, bigint, bigint];
+
     permitDetails.push({
       token: tokenBInfo.address,
       amount: (2n ** 160n - 1n).toString(),
@@ -298,19 +425,22 @@ if (usePermit2) {
     });
   }
 
+  // If we have any tokens to permit, create and sign the permit message
   if (permitDetails.length > 0) {
+    // Create permit data
     const permitData = {
       details: permitDetails,
       spender: POSITION_MANAGER_ADDRESS,
       sigDeadline: deadline.toString(),
     };
 
-    // Permit2 signature
+    // Sign the permit data with the user's wallet
+    // This requires user interaction to approve the signature
     const signature = await walletClient.signTypedData({
       account,
       domain: {
         name: 'Permit2',
-        chainId: unichain.id,
+        chainId,
         verifyingContract: PERMIT2_ADDRESS,
       },
       types: PERMIT2_TYPES,
@@ -318,62 +448,89 @@ if (usePermit2) {
       message: permitData,
     });
 
+    // Add the permit data and signature to our mint options
     mintOptions.batchPermit = {
-      owner: user.address,
+      owner: userAddress,
       permitBatch: permitData,
       signature,
     };
   }
 }
-
-const { calldata, value } = V4PositionManager.addCallParameters(position, mintOptions);
 ```
 
-Under the hood, addCallParameters builds the necessary function calls to the PositionManager contract:
+## Using V4PositionManager to Generate Mint Transaction
 
-- It will encode a MINT_POSITION command with your position parameters (pool key, tickLower, tickUpper, liquidity from position, and amount0Max/amount1Max derived from your slippage tolerance) and a SETTLE_PAIR command to pull in the tokens. The slippageTolerance is applied to calculate amount0Max and amount1Max – these are the maximum token amounts the contract is allowed to take, ensuring you don't pay more than intended.
-- If useNative was true, it would also append a SWEEP command for the native token.
-- If batchPermit is provided, the SDK will prepend the permit call (via the Permit2Forwarder) likely using the contract's multicall capability. The PositionManager v4 contract inherits Multicall_v4 and Permit2Forwarder, meaning it can execute multiple sub-calls atomically. The SDK takes advantage of this: it generates a single combined calldata that first uses the Permit2 signature to approve token spending, then performs the modifyLiquidities (mint) action. This way, the user signs one transaction and the contract takes care of both approval and liquidity addition.
+With a Position object and MintOptions prepared, we can now use the SDK to compute the calldata and value needed for the transaction:
 
-The returned MethodParameters has:
+```typescript
+import { V4PositionManager } from '@uniswap/v4-sdk';
 
-- **calldata**: a hex string starting with the function selector (likely for multicall or modifyLiquidities depending on context) and encoding all parameters.
-- **value**: a hex string for the amount of ETH (in wei) to send. This will be non-zero if useNative was true (equal to amount0Max or amount1Max of the native token). If neither token is native, value will be "0x0".
+// Generate transaction parameters
+// This produces the calldata and value needed for the blockchain transaction
+const { calldata, value } = V4PositionManager.addCallParameters(position, mintOptions);
 
-> **Note**: If you set `createPool: true`, the SDK will include pool initialization in the call. In practice, this might be done by calling the PoolInitializer_v4.create() through the PositionManager's command sequence. Ensure sqrtPriceX96 is correctly set; otherwise the transaction will revert (pool initialization requires a valid starting price). You could also call `V4PositionManager.createCallParameters(poolKey, sqrtPriceX96)` separately to get the data for pool creation if you want to deploy the pool in a separate transaction, but combining it with the first mint is typically more gas-efficient.
+// Log the results (for debugging)
+console.log('Calldata:', calldata);
+console.log('Value:', value);
+```
+
+Under the hood, `addCallParameters` builds the necessary function calls to the PositionManager contract:
+
+- It encodes a MINT_POSITION command with your position parameters (pool key, tickLower, tickUpper, liquidity) and a SETTLE_PAIR command to pull in the tokens.
+- The slippageTolerance is applied to calculate amount0Max and amount1Max – these are the maximum token amounts the contract is allowed to take.
+- If useNative was true, it would also append a SWEEP command for the native token. In case of solidity, please read this report carefully. https://reports.electisec.com/reports/04-2025-Sickle#2-high---uniswapv4connectoraddliquidity-does-not-reclaim-excess-eth
+- If batchPermit is provided, the SDK will prepend the permit call using the contract's multicall capability.
 
 ## Executing the Transaction with Viem
 
-After obtaining calldata and value, you need to send the transaction to the blockchain. In a frontend context (like using viem or wagmi hooks), you'd do something like:
+After obtaining calldata and value, you need to send the transaction to the blockchain:
 
 ```typescript
-// Send the transaction
-const txHash = await walletClient.writeContract({
-  account,
-  chain: chainId,
-  address: POSITION_MANAGER_ADDRESS,
-  abi: POSITION_MANAGER_ABI,
-  functionName: 'multicall',
-  data: [[calldata]],
-  value: BigInt(value),
-});
+import { createWalletClient } from 'viem';
 
-const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+// Function to execute the mint transaction
+async function executeTransaction() {
+  try {
+    // Send the transaction
+    const txHash = await walletClient.writeContract({
+      account,
+      chain: chainId,
+      address: POSITION_MANAGER_ADDRESS,
+      abi: POSITION_MANAGER_ABI,
+      functionName: 'multicall',
+      data: [[calldata]],
+      value: BigInt(value),
+    });
+
+    // Update UI
+    setStatus(`Transaction submitted: ${txHash}`);
+
+    // Wait for transaction confirmation
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash: txHash,
+    });
+  } catch (error) {
+    console.error('Transaction failed:', error);
+  }
+}
 ```
 
-This will prompt the user to confirm the transaction (in their wallet). The PositionManager contract will execute the encoded commands:
+## Complete Flow in the Uniswap Interface
 
-1. If permit was included, it uses Permit2 to pull allowances (no prior ERC20 approvals needed).
-2. It mints the liquidity (initializing the pool if required) and transfers the tokens from the user.
-3. It mints an NFT to recipient representing the new position.
+A typical user journey in the Uniswap Interface follows these steps:
 
-Using viem's sendTransaction is straightforward because we already have the raw calldata. We simply specify the to address and attach the value. Since the SDK's calldata is fully formed, we do not need to call a specific ABI function via walletClient.writeContract (in fact, if permit is included, the calldata likely targets the multicall(bytes[]) function on the PositionManager). Sending the raw tx as above is sufficient.
+1. User goes to "New Position" on the Pool tab
+2. Selects token A and token B
+3. Inputs amounts and a price range
+4. The app checks if the pool exists:
+   - If not, it asks for an initial price
+5. When the user clicks "Add Liquidity", the app will:
+   - If needed, prompt for a Permit2 signature for token A and B (user signs off-chain)
+   - Call V4PositionManager.addCallParameters with the appropriate options
+   - Send the transaction via viem
+   - On success, show the position NFT in the interface
 
-**Gas and Transaction Considerations**: The gasLimit can usually be left for the wallet or provider to estimate. However, v4's multi-command structure might cause estimates to be off if using Permit2 (since it executes external calls to Permit2). It's wise to include a buffer in gas. Also note that if your slippageTolerance is too tight and the price moves, the transaction may fail (since the required token amounts would exceed your specified max). Conversely, if the price moves favorably, you might not spend the full amount0Max/amount1Max – any unspent ETH (with useNative) would be returned via the SWEEP action.
+## Further Resources
 
-**Example flow in the interface**: A user goes to "New Position" on the Pool tab, selects token A and token B, inputs amounts, and a price range. The app checks if the pool exists. If not, it will ask for an initial price. When the user clicks "Add Liquidity", the app will:
-
-1. If needed, prompt for a Permit2 signature for token A and B (user signs off-chain).
-2. Call V4PositionManager.addCallParameters(position, mintOptions) with batchPermit (containing the signature) if step 1 was done.
-3. Send the transaction via wagmi/viem.
-4. On success, show the position NFT in the interface.
+- [Uniswap V4 SDK Repository](https://github.com/Uniswap/sdks/tree/main/sdks/v4-sdk)
+- [Permit2 Documentation](https://docs.uniswap.org/contracts/permit2/overview)
